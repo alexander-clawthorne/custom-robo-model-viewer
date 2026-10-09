@@ -28,7 +28,7 @@ def texture_image(d, tex, cache):
             cache[key] = None
     return cache[key]
 
-def render(d, meshes, yaw, size=512, pitch=0.25):
+def render(d, meshes, yaw, size=512, pitch=0.25, cull=False):
     tris = [(m, t) for m in meshes for t in m['tris']]
     pts = np.array([v['pos'] for _, t in tris for v in t], np.float32)
     lo, hi = pts.min(0), pts.max(0)
@@ -51,7 +51,7 @@ def render(d, meshes, yaw, size=512, pitch=0.25):
         if x0 > x1 or y0 > y1:
             continue
         area = (sx[1] - sx[0]) * (syy[2] - syy[0]) - (sx[2] - sx[0]) * (syy[1] - syy[0])
-        if abs(area) < 1e-9:
+        if abs(area) < 1e-9 or (cull and area > 0):
             continue
         X, Y = np.meshgrid(np.arange(x0, x1 + 1) + 0.5, np.arange(y0, y1 + 1) + 0.5)
         w0 = ((sx[1] - X) * (syy[2] - Y) - (sx[2] - X) * (syy[1] - Y)) / area
@@ -92,11 +92,19 @@ def main():
     a = argparse.ArgumentParser()
     a.add_argument('archive'); a.add_argument('index', type=int); a.add_argument('out', type=Path)
     a.add_argument('--size', type=int, default=384)
+    a.add_argument('--cull', action='store_true', help='skip back faces (see into skyboxes)')
+    a.add_argument('--pitch', type=float, default=0.25)
+    a.add_argument('--max-extent', type=float, help='drop meshes larger than this (skyboxes)')
     args = a.parse_args()
     d, joints, meshes = load_model(args.archive, args.index)
+    if args.max_extent:
+        def extent(m):
+            p = np.array([v['pos'] for t in m['tris'] for v in t] or [[0, 0, 0]])
+            return float(np.abs(p).max())
+        meshes = [m for m in meshes if extent(m) <= args.max_extent]
     ntri = sum(len(m['tris']) for m in meshes)
     print(f'{args.archive}[{args.index}]: {len(joints)} joints, {len(meshes)} meshes, {ntri} triangles')
-    views = [render(d, meshes, yaw, args.size) for yaw in (0.0, math.pi / 2, math.pi)]
+    views = [render(d, meshes, yaw, args.size, args.pitch, args.cull) for yaw in (0.0, math.pi / 2, math.pi)]
     args.out.parent.mkdir(parents=True, exist_ok=True)
     Image.fromarray(np.concatenate(views, 1)).save(args.out)
     print('wrote', args.out)
