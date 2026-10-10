@@ -211,6 +211,23 @@ def cook_collision(index):
     return bytes(out), {'blocks': len(blocks), 'faces': faces,
                         'triangles': sum(b[2] for b in batches) // 3, 'radius': round(radius, 3)}
 
+def cook_collision_data(index):
+    """The arena's collision for gameplay (src/collide.c), little-endian:
+      'COL1', u32 block count
+      per block: f32 centre[3], radius, u32 flags, u32 face count, u32 verts per face
+      per face:  f32 vert[n][3], normal[3], d, u32 kind
+    Same fields as bg_data.BIN (tools/collision.py), byte-swapped."""
+    blocks, _ = arena_collision(index)
+    out = bytearray(b'COL1' + struct.pack('<I', len(blocks)))
+    for block in blocks:
+        n = len(block.faces[0].verts) if block.faces else 4
+        out += struct.pack('<4f3I', *block.centre, block.radius, block.flags, len(block.faces), n)
+        for face in block.faces:
+            for v in face.verts:
+                out += struct.pack('<3f', *v)
+            out += struct.pack('<4fI', *face.normal, face.d, face.kind)
+    return bytes(out)
+
 def skeleton_block(archive, index, joints):
     """CRM2 skeleton: joints, rig slots and the robot's 32 dimension floats.
     Per joint: s16 parent, u8 IK type (1 JOINT1, 2 JOINT2, 3 EFFECTOR), u8 pad,
@@ -281,6 +298,8 @@ def main():
         folder = OUT / folders[archive]
         folder.mkdir(parents=True, exist_ok=True)
         (folder / f'{i:03d}.crm').write_bytes(blob)
+        if archive == 'collide':
+            (folder / f'{i:03d}.col').write_bytes(cook_collision_data(i))
         print(f'{archive}:{i} {len(blob) // 1024} KB {info}', flush=True)
     # index.txt lists the cooked files, so a partial cook (--only) still loads;
     # categories.txt lists the folders the viewer cycles through with Y.
