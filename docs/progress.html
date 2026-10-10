@@ -93,7 +93,7 @@ tr.group td { background: var(--bg); font-family: var(--font-display); font-weig
 <div class="wrap">
 
 <header>
-  <span class="eyebrow">Personal project · Updated 2026-10-09</span>
+  <span class="eyebrow">Personal project · Updated 2026-10-10</span>
   <h1>Custom Robo 3DS</h1>
   <p>Rebuild Custom Robo (GameCube, USA, <code>GXCE01</code>) to run on a Nintendo 3DS: arena battles and the story campaign. Everything is converted from your own disc on your own PC; no game data lives in the repo.</p>
   <div class="meta">
@@ -102,10 +102,11 @@ tr.group td { background: var(--bg); font-family: var(--font-display); font-weig
     <span>Test: Citra 60 FPS, 3DS via FileZilla</span>
   </div>
   <div class="summary" aria-label="Step counts">
-    <span class="count"><b>9</b> <span class="pill s-done">Done</span></span>
-    <span class="count"><b>1</b> <span class="pill s-next">Next</span></span>
-    <span class="count"><b>17</b> <span class="pill s-todo">To do</span></span>
+    <span class="count"><b>11</b> <span class="pill s-done">Done</span></span>
+    <span class="count"><b>1</b> <span class="pill s-prog">In progress</span></span>
+    <span class="count"><b>18</b> <span class="pill s-todo">To do</span></span>
     <span class="count"><b>557</b> models on the 3DS</span>
+    <span class="count"><b>363</b> robot motions playing</span>
   </div>
 </header>
 
@@ -116,7 +117,7 @@ tr.group td { background: var(--bg); font-family: var(--font-display); font-weig
   </div>
   <div class="phases">
     <div class="phase"><span class="n">PHASE 1</span><h3>Models &amp; textures</h3><div class="bar"><i style="width:100%"></i></div><small>All 557 models decode and render. Viewer app on 3DS.</small><span class="pill s-done">Done</span></div>
-    <div class="phase"><span class="n">PHASE 2</span><h3>Animation</h3><div class="bar"><i style="width:0%"></i></div><small>Motion files, skinning on the 3DS. Ends the T-pose.</small><span class="pill s-next">Next</span></div>
+    <div class="phase"><span class="n">PHASE 2</span><h3>Animation</h3><div class="bar"><i style="width:67%"></i></div><small>Robot motions play on the 3DS. Story-character motions still to do.</small><span class="pill s-prog">In progress</span></div>
     <div class="phase"><span class="n">PHASE 3</span><h3>World data</h3><div class="bar"><i style="width:0%"></i></div><small>Arena collision, effects, story maps, text, sound.</small><span class="pill s-todo">To do</span></div>
     <div class="phase"><span class="n">PHASE 4</span><h3>Robot assembly</h3><div class="bar"><i style="width:0%"></i></div><small>Gun, bomb, pod and legs attached to a body.</small><span class="pill s-todo">To do</span></div>
     <div class="phase"><span class="n">PHASE 5</span><h3>Arena battles</h3><div class="bar"><i style="width:0%"></i></div><small>Movement, weapons, damage, CPU, versus flow.</small><span class="pill s-todo">To do</span></div>
@@ -145,8 +146,9 @@ tr.group td { background: var(--bg); font-family: var(--font-display); font-weig
         <tr><td class="num">8</td><td><span class="pill s-done">Done</span></td><td><span class="tag">models.py</span></td><td>Guns shown upright (mount rotation dropped when viewed alone).</td></tr>
         <tr><td class="num">9</td><td><span class="pill s-done">Done</span></td><td><span class="tag">src/</span></td><td><code>make AUTOTEST=1</code> build that steps through every category, for hands-off emulator checks.</td></tr>
         <tr class="group"><td colspan="4">Phase 2 · Animation</td></tr>
-        <tr><td class="num">10</td><td><span class="pill s-next">Next</span></td><td><span class="tag">motion.DBN</span></td><td>Decode the shared robot motions (<code>motion.DBN</code>, 3-entry table) and story motions (<code>snr_motion.BIN</code>, 50 entries) into keyframe tracks.</td></tr>
-        <tr><td class="num">11</td><td><span class="pill s-todo">To do</span></td><td><span class="tag">src/</span></td><td>Play animations on the 3DS: per-frame joint matrices, skinned vertices, IK effectors driven by the motion.</td></tr>
+        <tr><td class="num">10</td><td><span class="pill s-done">Done</span></td><td><span class="tag">motion.py</span></td><td>All 363 robot motions in <code>motion.DBN</code> decoded and named from the game's own table (walks, runs, jumps, attacks, win and lose poses). Keyframes are cubic Hermite curves; the evaluator at <code>0x8001eb48</code> was confirmed in Ghidra.</td></tr>
+        <tr><td class="num">11</td><td><span class="pill s-done">Done</span></td><td><span class="tag">src/anim.c</span></td><td>Motions play on the 3DS at 60 FPS: the game's two-pass solve (IK on its built-in default skeleton, then each robot rebuilt with its own limb lengths), rigid parts per joint, blended parts skinned on the CPU. X / SELECT pick the motion.</td></tr>
+        <tr><td class="num">11b</td><td><span class="pill s-todo">To do</span></td><td><span class="tag">snr_motion</span></td><td>Story-character motions (<code>snr_motion.BIN</code>, 50 entries; talk, turn, sit, laugh) on the 56 story characters. Also mirroring and motion blending.</td></tr>
         <tr class="group"><td colspan="4">Phase 3 · World data</td></tr>
         <tr><td class="num">12</td><td><span class="pill s-todo">To do</span></td><td><span class="tag">bg_data.BIN</span></td><td>Arena collision: the 40 odd entries (<code>[count, 0x10, ...]</code> tables) next to each arena.</td></tr>
         <tr><td class="num">13</td><td><span class="pill s-todo">To do</span></td><td><span class="tag">*_effect.BIN</span></td><td>Weapon and hit effects: <code>attack/gun/bomb/pod_effect.BIN</code>, <code>efc_common.dbn</code>, HSD particles in <code>leg_effect.BIN</code>.</td></tr>
@@ -173,6 +175,33 @@ tr.group td { background: var(--bg); font-family: var(--font-display); font-weig
   </div>
 </section>
 
+<section id="how">
+  <div class="section-head">
+    <h2>How the joints and textures came out right</h2>
+    <p>Nothing was guessed into place: each fix was checked against code that already runs these formats correctly.</p>
+  </div>
+  <div class="cols">
+    <div class="callout">
+      <h3>Joints</h3>
+      <p>Custom Robo is built on HAL's sysdolphin engine, the same one as Melee. The Melee decompilation has turned that engine back into readable C, so the joint layout (position, rotation, scale, children) and the order rotations apply in come straight from it.</p>
+      <p>The one hard bug was the arms and legs. They are inverse-kinematics chains, and reading the engine's own code (<code>resolveIKJoint1</code>, <code>resolveIKJoint2</code> and the effector case in <code>jobj.c</code>) showed the rule: a chain is only solved when its end joint has a target, and otherwise the end joint is placed one bone length along its parent. Using that rule put every limb where it belongs.</p>
+      <p>Animation used the same approach one level up: the motion code in the game itself was decompiled with Ghidra (REA cannot open PowerPC), and its two-pass solve was rebuilt step by step.</p>
+      <p class="note"><a href="https://github.com/doldecomp/melee/blob/master/src/sysdolphin/baselib/jobj.c">melee: jobj.c</a> · <a href="https://github.com/doldecomp/melee">doldecomp/melee</a> · <a href="https://github.com/Ploaj/HSDLib">HSDLib</a> (HSD file layouts)</p>
+    </div>
+    <div class="callout">
+      <h3>Textures</h3>
+      <p>GameCube textures are compressed and stored in small tiles. The decoder follows the formats as Dolphin (the GameCube emulator) implements them, and each result was checked with a PC render before going near the 3DS.</p>
+      <p>The 3DS stores textures in its own tiled order. The first 3DS build had scrambled colours because the image was flipped twice. The fix was to encode a test image with devkitPro's own converter, <code>tex3ds</code>, and change the cooker until its output matched byte for byte.</p>
+      <p class="note"><a href="https://github.com/dolphin-emu/dolphin/blob/master/Source/Core/VideoCommon/TextureDecoder_Common.cpp">Dolphin: TextureDecoder_Common.cpp</a> · <a href="https://github.com/devkitPro/tex3ds">devkitPro/tex3ds</a> · <a href="https://github.com/devkitPro/citro3d">devkitPro/citro3d</a></p>
+    </div>
+    <div class="callout">
+      <h3>How it was checked</h3>
+      <p>Two independent checks every time. A software renderer on the PC draws each model straight from the decoded data, so decoding mistakes show up without the 3DS involved. Then an automated Citra run steps through every category and screenshots it, which catches anything that only goes wrong on the 3DS GPU.</p>
+      <p class="note">Code: <a href="https://github.com/alexander-clawthorne/custom-robo-3ds/blob/main/tools/hsd.py">tools/hsd.py</a> · <a href="https://github.com/alexander-clawthorne/custom-robo-3ds/blob/main/tools/gxtex.py">tools/gxtex.py</a> · <a href="https://github.com/alexander-clawthorne/custom-robo-3ds/blob/main/tools/cook.py">tools/cook.py</a> (private repo)</p>
+    </div>
+  </div>
+</section>
+
 <section>
   <div class="section-head">
     <h2>What is on the disc</h2>
@@ -187,7 +216,8 @@ tr.group td { background: var(--bg); font-family: var(--font-display); font-weig
         <tr><td>Arenas (with skyboxes)</td><td><code>bg_data.BIN</code> even</td><td class="right">40</td><td><span class="pill s-done">On 3DS</span></td></tr>
         <tr><td>Story characters</td><td><code>snr_chara.BIN</code></td><td class="right">56</td><td><span class="pill s-done">On 3DS</span></td></tr>
         <tr><td>Story map objects</td><td><code>snr_obj.BIN</code></td><td class="right">89</td><td><span class="pill s-done">On 3DS</span></td></tr>
-        <tr><td>Robot motions</td><td><code>motion.DBN</code>, <code>snr_motion.BIN</code></td><td class="right">3 + 50</td><td><span class="pill s-next">Next</span></td></tr>
+        <tr><td>Robot motions</td><td><code>motion.DBN</code></td><td class="right">363</td><td><span class="pill s-done">On 3DS</span></td></tr>
+        <tr><td>Story motions</td><td><code>snr_motion.BIN</code></td><td class="right">50</td><td><span class="pill s-todo">To do</span></td></tr>
         <tr><td>Arena collision</td><td><code>bg_data.BIN</code> odd</td><td class="right">40</td><td><span class="pill s-todo">Unknown format</span></td></tr>
         <tr><td>Effects</td><td><code>*_effect.BIN</code>, <code>efc_common.dbn</code></td><td class="right">241</td><td><span class="pill s-todo">Unknown format</span></td></tr>
         <tr><td>Story maps</td><td><code>snr_map.BIN</code></td><td class="right">94</td><td><span class="pill s-todo">Unknown format</span></td></tr>
@@ -208,7 +238,7 @@ tr.group td { background: var(--bg); font-family: var(--font-display); font-weig
   <div class="cols">
     <div class="callout"><h3>Gameplay has no head start</h3><p>The MKW port borrowed Kinoko's finished physics. Nothing like that exists for Custom Robo, so movement, weapons, damage and AI are rebuilt from the game's PowerPC code and observation. This is the largest phase by far.</p></div>
     <div class="callout"><h3>Bombs might be sideways</h3><p>Guns now stand upright; bombs keep their mount rotation and lie horizontal. Unconfirmed which you expect.</p></div>
-    <div class="callout"><h3>Feet in the bind pose</h3><p>Feet lie sideways until an animation rotates them. Expected to go away with Phase 2.</p></div>
+    <div class="callout"><h3>Feet in the bind pose</h3><p>Resolved: feet point forward once a motion plays. They only lie sideways in the bind pose, which X / SELECT can still step to.</p></div>
     <div class="callout"><h3>Some arenas are only sky</h3><p>Arena entries 1, 8, 15, 38 and 39 are space backdrops without a floor; one entry is a <code>?</code> model.</p></div>
     <div class="callout"><h3>Size on the SD card</h3><p>The viewer is 224 MB because vertices are stored unindexed. Indexing should cut that a lot before the full game ships.</p></div>
     <div class="callout"><h3>Citra input</h3><p>Your Citra profile is controller-only, so emulator checks use the <code>AUTOTEST</code> build and background screenshots instead of key presses.</p></div>
