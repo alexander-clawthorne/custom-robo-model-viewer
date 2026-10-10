@@ -121,9 +121,25 @@ int main(void)
 	float yaw = 0.6f, pitch = 0.25f, zoom = 1.0f;
 	char err[96] = "";
 
+#ifdef AUTOTEST
+	// Test build (make AUTOTEST=1): step through every 10th robot, then every
+	// arena, about 2 s each, so an emulator run can be checked without input.
+	int autoFrames = 0;
+	spin = false;
+#endif
 	while (aptMainLoop()) {
 		hidScanInput();
 		u32 down = hidKeysDown(), held = hidKeysHeld();
+#ifdef AUTOTEST
+		if (++autoFrames == 120) {
+			autoFrames = 0;
+			if (mode == 0 && index[0] + 10 < catalogs[0].count) index[0] += 10;
+			else if (mode == 0) mode = 1;
+			else if (index[1] + 1 < catalogs[1].count) index[1]++;
+			else break;
+			reload = true;
+		}
+#endif
 		if (down & KEY_START)
 			break;
 		Catalog* cat = &catalogs[mode];
