@@ -147,10 +147,21 @@ int main(void)
 	C3D_RenderTargetSetOutput(top, GFX_TOP, GFX_LEFT, DISPLAY_TRANSFER_FLAGS);
 	sceneInit();
 	loadCategories();
-	MotionSet motions;
-	bool haveMotions = motionSetLoad(&motions, "romfs:/motion/robot.mot");
-	int motionIdx = haveMotions ? motionFind(&motions, "sf_normal_walk") : -1;
-	if (haveMotions && motionIdx < 0) motionIdx = 0;
+	// Robots play robot motions; story characters play the story set.
+	static const char* setFile[2] = { "romfs:/motion/robot.mot", "romfs:/motion/story.mot" };
+	static const char* setStart[2] = { "sf_normal_walk", "m_walk" };
+	MotionSet sets[2];
+	bool haveSet[2];
+	int setMotion[2];
+	for (int k = 0; k < 2; k++) {
+		haveSet[k] = motionSetLoad(&sets[k], setFile[k]);
+		setMotion[k] = haveSet[k] ? motionFind(&sets[k], setStart[k]) : -1;
+		if (haveSet[k] && setMotion[k] < 0) setMotion[k] = 0;
+	}
+	int active = 0;
+	AnimState animState;
+	memset(&animState, 0, sizeof animState);
+	bool mirror = false;
 	float frame = 0.0f;
 	Mat34* world = NULL;
 	bool info = false, reframe = false;
@@ -176,8 +187,9 @@ int main(void)
 #ifdef AUTOTEST
 		if (++autoFrames == 120) {
 			autoFrames = 0;
-			if (haveMotions && motions.count)  // a different motion on each robot
-				motionIdx = (motionIdx + 23) % motions.count;
+			for (int k = 0; k < 2; k++)  // a different motion on each model
+				if (haveSet[k] && sets[k].count)
+					setMotion[k] = (setMotion[k] + 23) % sets[k].count;
 			frame = 0;
 			if (index[mode] + 10 < catalogs[mode].count) index[mode] += 10;
 			else if (mode + 1 < catalogCount) mode++;
@@ -196,10 +208,21 @@ int main(void)
 		}
 		if ((down & KEY_Y) && catalogCount > 1) { mode = (mode + 1) % catalogCount; reload = true; }
 		if (down & KEY_B) spin = !spin;
+		bool haveMotions = haveSet[active];
+		MotionSet* motions = &sets[active];
+		int* motionIdx = &setMotion[active];
 		if (haveMotions && loaded && model.hasRig) {
-			// X / SELECT: next / previous motion; one step past the end is the bind pose.
-			if (down & KEY_X) { motionIdx = motionIdx + 1 >= motions.count ? -1 : motionIdx + 1; frame = 0; info = true; }
-			if (down & KEY_SELECT) { motionIdx = motionIdx < 0 ? motions.count - 1 : motionIdx - 1; frame = 0; info = true; }
+			// X / SELECT: next / previous motion, blended in over 10 frames; one step
+			// past the end is the bind pose. Touch: play mirrored.
+			int before = *motionIdx;
+			if (down & KEY_X) *motionIdx = *motionIdx + 1 >= motions->count ? -1 : *motionIdx + 1;
+			if (down & KEY_SELECT) *motionIdx = *motionIdx < 0 ? motions->count - 1 : *motionIdx - 1;
+			if (down & KEY_TOUCH) { mirror = !mirror; info = true; }
+			if (*motionIdx != before) {
+				frame = 0;
+				info = true;
+				animBlendStart(&animState, 10.0f);
+			}
 		}
 		if (down & KEY_A) { yaw = 0.6f; pitch = 0.25f; zoom = 1.0f; }
 		if (held & KEY_DUP) zoom *= 0.97f;
@@ -229,6 +252,9 @@ int main(void)
 				loaded = modelLoad(&model, path, err, sizeof err);
 				if (loaded && model.skinned)
 					world = malloc(model.jointCount * sizeof(Mat34));
+				active = strcmp(cat->folder, "snrchara") == 0 ? 1 : 0;
+				animState.hasLast = false;
+				frame = 0;
 			} else {
 				snprintf(err, sizeof err, "no cooked models in romfs");
 			}
@@ -246,24 +272,30 @@ int main(void)
 					model.textureCount, model.batchCount, model.radius);
 			else
 				printf("Load failed: %s\n", err);
-			if (loaded && model.hasRig && haveMotions)
-				printf("\nMotion %d / %d\n%s\n", motionIdx + 1, motions.count,
-					motionIdx >= 0 ? motions.motions[motionIdx].name : "(bind pose)");
+			if (loaded && model.hasRig && haveSet[active])
+				printf("\nMotion %d / %d%s\n%s\n", setMotion[active] + 1, sets[active].count,
+					mirror ? "  (mirrored)" : "",
+					setMotion[active] >= 0 ? sets[active].motions[setMotion[active]].name : "(bind pose)");
 			printf("\nL / R        previous / next\n");
 			printf("D-pad < >    jump 10\n");
 			printf("Y            next category\n");
 			printf("Circle pad   rotate\n");
 			printf("D-pad ^ v    zoom\n");
 			printf("B            auto-spin   A  reset\n");
-			if (loaded && model.hasRig && haveMotions)
+			if (loaded && model.hasRig && haveSet[active]) {
 				printf("X / SELECT   next / previous motion\n");
+				printf("Touch        mirror motion\n");
+			}
 			printf("START        exit\n");
 		}
 
 		const Motion* playing = NULL;
+		haveMotions = haveSet[active];
+		motions = &sets[active];
+		motionIdx = &setMotion[active];
 		if (loaded && world) {
-			if (haveMotions && model.hasRig && motionIdx >= 0) {
-				playing = &motions.motions[motionIdx];
+			if (haveMotions && model.hasRig && *motionIdx >= 0) {
+				playing = &motions->motions[*motionIdx];
 				frame += 1.0f;
 				if (frame > playing->length)
 					frame = 0.0f;
@@ -274,7 +306,7 @@ int main(void)
 				float lo[3] = { 1e9f, 1e9f, 1e9f }, hi[3] = { -1e9f, -1e9f, -1e9f };
 				for (int k = 0; k < 8; k++) {
 					float f = playing ? playing->length * k / 8.0f : 0.0f;
-					animPose(&model, haveMotions ? &motions : NULL, playing, f, world);
+					animPose(&model, haveMotions ? motions : NULL, playing, f, mirror, NULL, world);
 					for (u32 j = 0; j < model.jointCount; j++)
 						for (int a = 0; a < 3; a++) {
 							float v = world[j].m[a][3];
@@ -291,7 +323,7 @@ int main(void)
 				camRadius = sqrtf(d2) * 0.5f * 1.05f;
 				if (camRadius < model.radius) camRadius = model.radius;
 			}
-			animPose(&model, haveMotions ? &motions : NULL, playing, frame, world);
+			animPose(&model, haveMotions ? motions : NULL, playing, frame, mirror, &animState, world);
 		}
 		if (reframe && loaded && !world) {
 			memcpy(camCentre, model.centre, sizeof camCentre);
@@ -323,7 +355,8 @@ int main(void)
 
 	if (loaded) modelFree(&model);
 	free(world);
-	if (haveMotions) motionSetFree(&motions);
+	for (int k = 0; k < 2; k++)
+		if (haveSet[k]) motionSetFree(&sets[k]);
 	shaderProgramFree(&program);
 	DVLB_Free(vshader);
 	C3D_Fini();

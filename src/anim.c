@@ -1,5 +1,6 @@
-// Robot motion playback, ported from tools/pose.py, which follows the game's
-// own code in main.dol: keyframes at 0x8001eb48, pose solve at 0x8005aee8.
+// Motion playback, ported from tools/pose.py, which follows the game's own
+// code in main.dol: keyframes 0x8001eb48, root nodes 0x80056104, mirroring
+// 0x80053a20, pose solve 0x8005aee8, blending 0x80052884 / 0x80050f90.
 #include "anim.h"
 #include <math.h>
 #include <stdio.h>
@@ -211,15 +212,111 @@ static float evalTrack(const MotionTrack* t, float frame)
 // ------------------------------------------------------------------ solve
 static const int ROT_NODES[16] = { 1, 2, 4, 6, 7, 9, 10, 11, 13, 14, 15, 17, 18, 19, 21, 22 };
 
-// out[0] root, out[r + 1] rig slot r (19 slots).
-static void solve(const float* ch, const float* D, const float* ds, Mat34* out)
+// Position nodes, in PoseInput.pos order.
+static const int POS_NODES[7] = { 0, 3, 5, 8, 12, 16, 20 };
+enum { P_ROOT, P_CHEST, P_HEAD, P_HAND0, P_HAND1, P_FOOT0, P_FOOT1 };
+
+// Mirroring (0x80054238 for positions, 0x80053a20 for rotations): partner
+// node and per-axis rule, 1 keep, -1 negate, 2 = 180 - angle (the game's
+// constant is 32768 = 180 degrees). Indexed like ROT_NODES.
+static const struct { int partner; s8 rule[3]; } MIRROR_ROT[16] = {
+	{ 1, { 1, -1, -1 } }, { 2, { 1, 2, 1 } }, { 4, { 1, 2, 1 } },
+	{ 10, { -1, -1, 1 } }, { 11, { -1, -1, 1 } }, { 13, { -1, -1, 1 } },
+	{ 6, { -1, -1, 1 } }, { 7, { -1, -1, 1 } }, { 9, { -1, -1, 1 } },
+	{ 14, { -1, 2, -1 } }, { 19, { -1, -1, 1 } }, { 21, { 1, -1, -1 } },
+	{ 22, { 1, -1, -1 } }, { 15, { -1, -1, 1 } }, { 17, { 1, -1, -1 } },
+	{ 18, { 1, -1, -1 } },
+};
+
+static void apply(const Mat34* g, const float* p, float* out)
 {
-	const float* node[26];
-	for (int n = 0; n < 26; n++)
-		node[n] = ch + 3 * n;
-	Mat34 Mk[16];
+	for (int i = 0; i < 3; i++)
+		out[i] = g->m[i][0] * p[0] + g->m[i][1] * p[1] + g->m[i][2] * p[2] + g->m[i][3];
+}
+
+// Channels -> solver input. Root nodes 23-25 (0x80056104): every position
+// goes through T(n23 + R n25) * R, R = rotation of node 24, and node 24 is
+// added to node 1. All motions on the disc enable them (bank ID bit 15).
+static void prepare(const float* ch, bool mirror, PoseInput* in)
+{
+	static const int posAll[9] = { 0, 3, 5, 8, 12, 16, 20, 23, 25 };
+	float pos[26][3];
+	for (int i = 0; i < 9; i++) {
+		int n = posAll[i], src = n;
+		if (mirror)
+			src = n == 8 ? 12 : n == 12 ? 8 : n == 16 ? 20 : n == 20 ? 16 : n;
+		memcpy(pos[n], ch + 3 * src, sizeof pos[n]);
+		if (mirror)
+			pos[n][0] = -pos[n][0];
+	}
+	Mat34 root = nodeRot(ch + 3 * 24);
+	float t[3];
+	apply(&root, pos[25], t);
+	for (int i = 0; i < 3; i++)
+		root.m[i][3] = t[i] + pos[23][i];
+	for (int i = 0; i < 7; i++)
+		apply(&root, pos[POS_NODES[i]], in->pos[i]);
+	for (int i = 0; i < 3; i++)
+		root.m[i][3] = 0.0f;
+	in->root = root;
+
+	float rot[23][3];
 	for (int k = 0; k < 16; k++)
-		Mk[k] = nodeRot(node[ROT_NODES[k]]);
+		memcpy(rot[ROT_NODES[k]], ch + 3 * ROT_NODES[k], sizeof rot[0]);
+	for (int i = 0; i < 3; i++)
+		rot[1][i] += ch[3 * 24 + i];
+	for (int k = 0; k < 16; k++) {
+		float r[3];
+		if (mirror) {
+			const float* src = rot[MIRROR_ROT[k].partner];
+			for (int i = 0; i < 3; i++) {
+				int rule = MIRROR_ROT[k].rule[i];
+				r[i] = rule == 2 ? 180.0f - src[i] : rule * src[i];
+			}
+		} else {
+			memcpy(r, rot[ROT_NODES[k]], sizeof r);
+		}
+		in->rot[k] = nodeRot(r);
+	}
+}
+
+static void normalize3(float* v)
+{
+	float l = len3(v);
+	if (l > 0.0f)
+		for (int i = 0; i < 3; i++)
+			v[i] /= l;
+}
+
+// Rotation blend as in 0x80050f90: lerp two rows, then rebuild an
+// orthonormal basis from them with cross products.
+static void blendRot(const Mat34* from, Mat34* to, float f)
+{
+	float r0[3], r1[3], r2[3];
+	for (int i = 0; i < 3; i++) {
+		r0[i] = from->m[0][i] + (to->m[0][i] - from->m[0][i]) * f;
+		r1[i] = from->m[1][i] + (to->m[1][i] - from->m[1][i]) * f;
+	}
+	normalize3(r0);
+	r2[0] = r0[1] * r1[2] - r0[2] * r1[1];
+	r2[1] = r0[2] * r1[0] - r0[0] * r1[2];
+	r2[2] = r0[0] * r1[1] - r0[1] * r1[0];
+	normalize3(r2);
+	r1[0] = r2[1] * r0[2] - r2[2] * r0[1];
+	r1[1] = r2[2] * r0[0] - r2[0] * r0[2];
+	r1[2] = r2[0] * r0[1] - r2[1] * r0[0];
+	for (int i = 0; i < 3; i++) {
+		to->m[0][i] = r0[i]; to->m[1][i] = r1[i]; to->m[2][i] = r2[i];
+	}
+}
+
+// out[0] root, out[r + 1] rig slot r (19 slots).
+static void solve(const PoseInput* in, const float* D, const float* ds, Mat34* out)
+{
+	const float* node[26] = { 0 };
+	for (int i = 0; i < 7; i++)
+		node[POS_NODES[i]] = in->pos[i];
+	const Mat34* Mk = in->rot;
 	const float* rootPos = node[0];
 	float v[3];
 
@@ -306,8 +403,10 @@ static void solve(const float* ch, const float* D, const float* ds, Mat34* out)
 		t = rotZ(B - 180.0f); mulIn(&g, &t);
 		out[13 + 4 * side] = g;
 		t = trans(d[3], 0, 0); mulIn(&g, &t);
-		// Foot orientation is absolute, not chained down the leg (0x80059cc0).
-		const Mat34* foot = &Mk[legRot[side][1]];
+		// Foot orientation is absolute, not chained down the leg (0x80059cc0):
+		// the root-node rotation times the foot's own.
+		Mat34 footAbs = mul(&in->root, &Mk[legRot[side][1]]);
+		const Mat34* foot = &footAbs;
 		for (int i = 0; i < 3; i++)
 			for (int j = 0; j < 3; j++)
 				g.m[i][j] = foot->m[i][j];
@@ -332,7 +431,14 @@ static Mat34 jointLocal(const ModelJoint* j)
 	return m;
 }
 
-void animPose(const Model* model, const MotionSet* set, const Motion* m, float frame, Mat34* world)
+void animBlendStart(AnimState* state, float frames)
+{
+	state->blendLen = frames;
+	state->blend = 0.0f;
+}
+
+void animPose(const Model* model, const MotionSet* set, const Motion* m, float frame, bool mirror,
+	AnimState* state, Mat34* world)
 {
 	Mat34 out[20];
 	bool solved = m && model->hasRig && set;
@@ -340,14 +446,34 @@ void animPose(const Model* model, const MotionSet* set, const Motion* m, float f
 		float ch[78];
 		for (int c = 0; c < 78; c++)
 			ch[c] = evalTrack(&m->tracks[c], frame);
-		// Play in place: remove the root's horizontal travel from every position node.
-		static const int posNodes[7] = { 0, 3, 5, 8, 12, 16, 20 };
-		float rx = ch[0], rz = ch[2];
+		PoseInput in;
+		prepare(ch, mirror, &in);
+		// Play in place: remove the root's horizontal travel from every position.
+		float rx = in.pos[P_ROOT][0], rz = in.pos[P_ROOT][2];
 		for (int i = 0; i < 7; i++) {
-			ch[3 * posNodes[i]] -= rx;
-			ch[3 * posNodes[i] + 2] -= rz;
+			in.pos[i][0] -= rx;
+			in.pos[i][2] -= rz;
 		}
-		solve(ch, model->dims, set->defaults, out);
+		if (state) {
+			// Blend into a new motion over blendLen frames: f = elapsed / length
+			// (0x80052884), mixed with the previous output like the game does.
+			if (state->hasLast && state->blend < state->blendLen) {
+				state->blend += 1.0f;
+				float f = state->blend / state->blendLen;
+				const PoseInput* a = &state->last;
+				for (int i = 0; i < 7; i++)
+					for (int k = 0; k < 3; k++)
+						in.pos[i][k] = a->pos[i][k] + (in.pos[i][k] - a->pos[i][k]) * f;
+				for (int k = 0; k < 16; k++)
+					blendRot(&a->rot[k], &in.rot[k], f);
+				blendRot(&a->root, &in.root, f);
+			}
+			state->last = in;
+			state->hasLast = true;
+		}
+		solve(&in, model->dims, set->defaults, out);
+	} else if (state) {
+		state->hasLast = false;
 	}
 	for (u32 i = 0; i < model->jointCount; i++) {  // parents come first
 		const ModelJoint* j = &model->joints[i];

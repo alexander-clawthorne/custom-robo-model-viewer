@@ -24,9 +24,29 @@ bool motionSetLoad(MotionSet* set, const char* path);
 void motionSetFree(MotionSet* set);
 int motionFind(const MotionSet* set, const char* name);
 
+// Solver input for one frame: the seven position targets (root, chest, head,
+// two hands, two feet), the 16 node rotations and the root-node rotation.
+typedef struct {
+	float pos[7][3];
+	Mat34 rot[16];
+	Mat34 root;
+} PoseInput;
+
+// Blending between motions: keeps the last input and mixes the next ones
+// into it over blendLen frames.
+typedef struct {
+	PoseInput last;
+	bool hasLast;
+	float blend, blendLen;
+} AnimState;
+
+void animBlendStart(AnimState* state, float frames);
+
 // World matrix of every joint for one frame of motion m (NULL = bind pose).
-// world must hold model->jointCount matrices.
-void animPose(const Model* model, const MotionSet* set, const Motion* m, float frame, Mat34* world);
+// mirror plays it left-right swapped. state (may be NULL) carries blending
+// from one call to the next. world must hold model->jointCount matrices.
+void animPose(const Model* model, const MotionSet* set, const Motion* m, float frame, bool mirror,
+	AnimState* state, Mat34* world);
 
 // Re-skin the model's envelope batches into its VBO from the given joint matrices.
 void animSkin(Model* model, const Mat34* world);
