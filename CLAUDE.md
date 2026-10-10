@@ -45,9 +45,22 @@ docker run --rm -v "C:/Users/Alexander/source/repos/custom-robo-3ds:/proj" -w /p
   418-1094 (motion.DBN bank 2 + snr_motion.BIN, one bank per scenario script).
 - Posing (`tools/pose.py`, ported to `src/anim.c`): root nodes 0x80056104,
   mirror 0x80053a20, two-pass solve 0x8005aee8, blend 0x80052884.
-- Scenario scripts (`scenario/snr_t_01-20.bin`, `snr_f_01-30.bin`, magic `SCR`)
-  are big-endian u16 bytecode; `66, actor, motionID, flag` appears to play a
-  motion (IDs 418+ match story motion names). Not decoded beyond that.
+- Scenario scripts (`tools/scr.py`, `scenario/snr_*.bin`, magic `SCR`). Every
+  offset in the file is relative to 0x40, where the entry table of
+  (code ptr, name ptr) pairs starts. The game shipped its own symbol names for
+  both the 7092 scripts and the 300 opcodes: the opcode names are 300 char* at
+  `0x8021bf44` in main.dol, index-aligned with the handlers at `0x8021c3f4`
+  (`opcode_names()` reads them). There is no dispatch loop -- the interpreter
+  is threaded, each handler advancing the pc by its own hardcoded length, so
+  the instruction sizes live in `OPCODE_BYTES`, not in any table.
+  Instructions are 4-byte aligned: u16 opcode, u16 at +2 (actor or flag id),
+  then u32 operands -- pointers (marked by the relocation table; the operand
+  points at the *entry-table record*, so ptr/8 is the script index), floats,
+  or packed u16 pairs. `CHAR_TALK` (59) is actor + BMG slot, `CHAR_MOT_SET`
+  (66) is actor + motion id + flag (flag 1 = global motion id, flag 0 = an
+  index into the actor's own table), `F_CHK_BIT` (248) is the if/else.
+  `snr_f_25-28` are four byte-identical copies of a stale 2003 build and
+  `snr_f_29` another; they use different opcode numbering and do not decode.
 - Arena collision (`tools/collision.py`): bg_data.BIN odd entry 2N+1, blocks of
   convex faces with precomputed planes, 4-gons everywhere but arena 7 (3-gons);
   the stride comes from the gap to the next block, not from a field. The game
