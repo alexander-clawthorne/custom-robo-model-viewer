@@ -20,7 +20,7 @@ from PIL import Image
 sys.path.insert(0, str(Path(__file__).parent))
 import gxtex, hsd
 from collision import ARENAS, arena as arena_collision
-from models import FILES, load_model
+from models import EFFECT_ARCHIVES, FILES, effect_subs, load_model
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / 'romfs'
@@ -82,6 +82,8 @@ SKINNED = {'chara', 'snrchara'}  # both carry the 19-slot rig and 32 dimensions
 def cook(archive, index):
     skinned = archive in SKINNED
     d, joints, meshes = load_model(archive, index)
+    if not any(mesh['tris'] for mesh in meshes):
+        return None, {'skipped': 'no triangles'}   # effect emitters are joints only
     textures, tex_index, batches = [], {}, []
     for mesh in meshes:
         if not mesh['tris']:
@@ -226,12 +228,20 @@ def skeleton_block(archive, index, joints):
 CATEGORIES = [('chara', 'robo', 'Robot'), ('gun', 'gun', 'Gun'), ('bom', 'bomb', 'Bomb'),
               ('pod', 'pod', 'Pod'), ('leg', 'leg', 'Legs'), ('bg', 'arena', 'Arena'),
               ('snrchara', 'snrchara', 'Story character'), ('snrobj', 'snrobj', 'Story object'),
-              ('collide', 'collide', 'Arena collision')]
+              ('collide', 'collide', 'Arena collision'),
+              ('atkfx', 'atkfx', 'Attack effect'), ('gunfx', 'gunfx', 'Gun effect'),
+              ('bomfx', 'bomfx', 'Bomb effect'), ('podfx', 'podfx', 'Pod effect'),
+              ('legfx', 'legfx', 'Leg effect'), ('efcfx', 'efcfx', 'Shared effect')]
 
 def entry_count(archive):
     from models import ROBO_ARCHIVES, SCENE_ARCHIVES
     if archive == 'collide':
         return ARENAS
+    if archive in EFFECT_ARCHIVES:
+        name = EFFECT_ARCHIVES[archive]
+        if name.endswith('.dbn'):    # the file is one container
+            return struct.unpack_from('>I', (FILES / name).read_bytes(), 0)[0]
+        return 2 * len(hsd.sfd_entries((FILES / name).read_bytes()))   # two per SFD entry
     if archive in ROBO_ARCHIVES:
         return len(hsd.sfd_entries((FILES / ROBO_ARCHIVES[archive]).read_bytes()))
     name, stride = SCENE_ARCHIVES[archive]
@@ -248,6 +258,9 @@ def main():
         targets = [(arc, i) for arc, _, _ in CATEGORIES for i in range(entry_count(arc))]
     for archive, i in targets:
         blob, info = cook_collision(i) if archive == 'collide' else cook(archive, i)
+        if blob is None:
+            print(f'{archive}:{i} {info}', flush=True)
+            continue
         folder = OUT / folders[archive]
         folder.mkdir(parents=True, exist_ok=True)
         (folder / f'{i:03d}.crm').write_bytes(blob)

@@ -4,10 +4,13 @@
   snrchara N  story character N (scenario_us/snr_chara.BIN, same wrapper)
   gun/bom/pod/leg N   weapon part N (weapon_<kind>.BIN, parts variant)
   bg N        arena N (bg_data.BIN entry 2N, standard HSD scene_data)
+  atk/gun/bom/podfx N   effect N (*_effect.BIN; each SFD entry holds two
+              standard HSD archives, so N is entry*2 + sub)
   snrobj N    story map object N (scenario_us/snr_obj.BIN, HSD scene_data)
   legfx N     leg-part effect N (leg_effect.BIN, HSD scene_data)
   title       TITLE_MODEL.dat
 """
+import struct
 from pathlib import Path
 import hsd
 
@@ -32,6 +35,22 @@ ROBO_ARCHIVES = {'chara': 'chara.BIN', 'snrchara': 'scenario_us/snr_chara.BIN',
 # at on the robot (see hsd.walk_joints).
 UPRIGHT_ALONE = {'gun'}
 SCENE_ARCHIVES = {'bg': ('bg_data.BIN', 2), 'snrobj': ('scenario_us/snr_obj.BIN', 1), 'legfx': ('leg_effect.BIN', 1)}
+# Weapon and hit effects. Unlike leg_effect.BIN, each SFD entry is a small
+# container of its own -- u32 count, then count+1 offsets, the last being the
+# entry size -- holding two standard HSD archives: the projectile and its
+# burst. Both carry scene_data, and their ModelSets have the AnimJoint and
+# MatAnimJoint pointers the effect animates with.
+# efc_common.dbn is not an SFD: the file itself is one such container.
+EFFECT_ARCHIVES = {'atkfx': 'attack_effect.BIN', 'gunfx': 'gun_effect.BIN',
+                   'bomfx': 'bomb_effect.BIN', 'podfx': 'pod_effect.BIN',
+                   'efcfx': 'efc_common.dbn'}
+
+def effect_subs(name, index):
+    """Every HSD archive inside the container at entry `index`."""
+    blob = (FILES / name).read_bytes() if name.endswith('.dbn') else entry(name, index)
+    count = struct.unpack_from('>I', blob, 0)[0]
+    offs = struct.unpack_from(f'>{count + 1}I', blob, 4)
+    return [blob[offs[k]:offs[k + 1]] for k in range(count)]
 
 def load_model(archive, index=0):
     if archive in ROBO_ARCHIVES:
@@ -40,6 +59,12 @@ def load_model(archive, index=0):
     elif archive in SCENE_ARCHIVES:
         name, stride = SCENE_ARCHIVES[archive]
         d = hsd.read_hsd(entry(name, index * stride))
+        roots = scene_roots(d, d.roots['scene_data'])
+    elif archive in EFFECT_ARCHIVES:
+        name = EFFECT_ARCHIVES[archive]
+        per = 1 if name.endswith('.dbn') else 2
+        subs = effect_subs(name, index // per if per > 1 else 0)
+        d = hsd.read_hsd(subs[index % per if per > 1 else index])
         roots = scene_roots(d, d.roots['scene_data'])
     elif archive == 'title':
         d = hsd.read_hsd((FILES / 'TITLE_MODEL.dat').read_bytes())
