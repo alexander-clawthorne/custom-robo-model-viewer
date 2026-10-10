@@ -1,8 +1,10 @@
 // Battle test: run, jump, air dash and land in a real arena, against its own
 // collision, with a camera that keeps both robots in view.
 //
-// The numbers in MoveParams are the game's where they have been read out of
-// main.dol and placeholders where not; each says which.
+// Movement follows main.dol: the body and leg stat tables (tools/stats.py,
+// romfs/stats/parts.bin) combined as 0x80006658 does, and the rules of the
+// movement update 0x80049924, the air dash 0x80046f58 and the gravity and
+// landing code in 0x8004b0a0. What is still a guess says so.
 #include "battle.h"
 #include <math.h>
 #include <stdio.h>
@@ -14,34 +16,134 @@
 
 #define CLEAR_COLOR 0x202830FF
 #define PI 3.14159265f
+#define DEG (PI / 180.0f)
+
+// The game keeps velocity in hundredths of a world unit per frame: its
+// position update is pos += 0.01 * vel. Everything here is in world units.
+#define VEL 0.01f
+
+// romfs/stats/parts.bin (tools/stats.py --cook): per body a (min, normal,
+// max) triple for 14 stats, per leg the percentage that picks along each.
+typedef struct {
+	char name[24];
+	u16 hp;
+	s16 tri[14][3];
+	s16 steer;            // stat 14, the body's own
+	u8 dashType, dashes;
+	s8 dashPitch;         // degrees above horizontal
+	u8 pad;
+} BodyStats;
+typedef struct {
+	char name[24];
+	u8 pct[14];
+	u8 pad[2];
+} LegStats;
+typedef struct {
+	BodyStats* body;
+	LegStats* leg;
+	u32 bodies, legs;
+} PartStats;
+
+static bool statsLoad(PartStats* s, const char* path)
+{
+	memset(s, 0, sizeof *s);
+	FILE* f = fopen(path, "rb");
+	if (!f)
+		return false;
+	char magic[4];
+	u32 n[2];
+	bool ok = fread(magic, 4, 1, f) == 1 && !memcmp(magic, "STA1", 4) && fread(n, 4, 2, f) == 2;
+	if (ok) {
+		s->bodies = n[0];
+		s->legs = n[1];
+		s->body = malloc(n[0] * sizeof(BodyStats));
+		s->leg = malloc(n[1] * sizeof(LegStats));
+		ok = fread(s->body, sizeof(BodyStats), n[0], f) == n[0] && fread(s->leg, sizeof(LegStats), n[1], f) == n[1];
+	}
+	fclose(f);
+	if (!ok) {
+		free(s->body);
+		free(s->leg);
+		memset(s, 0, sizeof *s);
+	}
+	return ok;
+}
+
+static void statsFree(PartStats* s)
+{
+	free(s->body);
+	free(s->leg);
+	memset(s, 0, sizeof *s);
+}
+
+// 0x80006658: leg percentage p picks along the body's triple, 100 = normal.
+static void statsCombine(const BodyStats* b, const LegStats* l, int out[15])
+{
+	for (int k = 0; k < 14; k++) {
+		int lo = b->tri[k][0], mid = b->tri[k][1], hi = b->tri[k][2], p = l->pct[k];
+		float v = p > 100 ? mid + (p - 100) * (hi - mid) / 100.0f : lo + p * (mid - lo) / 100.0f;
+		out[k] = (int)v;
+	}
+	out[14] = b->steer;
+}
 
 typedef struct {
-	float runSpeed;     // ground speed, units per frame (60 Hz)
-	float runAccel;     // speed gained per frame towards the stick
-	float runDecel;     // speed lost per frame with the stick released
-	float turnRate;     // radians per frame
-	float gravity;      // units per frame per frame
-	float maxFall;
-	float jumpSpeed;    // upward speed at take-off
-	float airSpeed;     // horizontal speed reachable in the air
-	float airAccel;
-	int   airDashes;    // per jump
-	float dashSpeed;
-	int   dashFrames;
-	float dashLift;     // upward speed at the start of a dash
-	int   landFrames;   // recovery after landing
-	float radius;       // collision sphere, centred this high above the feet
+	int s[15];            // the combined stats, for the bottom screen
+	float runSpeed;       // 0.1 * s0
+	float runAccel;       // 0.001 * s1 per frame
+	float turn;           // 0.1 * s2 degrees per frame
+	float jumpLift;       // added each frame the button is held, up to s4 frames
+	int jumpHold;
+	float airSpeed;       // 0.1 * s5, the cap
+	float airAccel;       // 0.003 * s6 per frame
+	float gravity;        // 0.006 * s8
+	int landLag;          // s7: frames of landing lag after a hard landing
+	float impactSpeed;    // fall speed that counts as a hard landing
+	int afterDash;        // s10: extra landing lag after an air dash
+	int dashFrames;       // s12
+	float dashSpeed;      // 0.1 * s13
+	float dashSteer;      // 0.1 * s14 degrees per frame
+	float dashPitch;
+	int dashes;
+	float radius;         // collision sphere, centred this high above the feet
 } MoveParams;
 
-// PLACEHOLDERS until the stats and movement code are read out of the DOL.
-// runSpeed is the stride of sf_normal_run: its root channel advances 3.4
-// units over the 50-frame cycle.
-static const MoveParams defaultParams = {
-	.runSpeed = 0.068f, .runAccel = 0.012f, .runDecel = 0.02f, .turnRate = 0.25f,
-	.gravity = 0.010f, .maxFall = 0.35f, .jumpSpeed = 0.22f,
-	.airSpeed = 0.05f, .airAccel = 0.004f,
-	.airDashes = 1, .dashSpeed = 0.20f, .dashFrames = 18, .dashLift = 0.05f,
-	.landFrames = 8, .radius = 0.45f,
+static void moveParams(const BodyStats* b, const LegStats* l, MoveParams* p)
+{
+	int* s = p->s;
+	statsCombine(b, l, s);
+	p->runSpeed = 0.1f * s[0] * VEL;
+	p->runAccel = 0.001f * s[1] * VEL;
+	p->turn = 0.1f * s[2] * DEG;
+	// Gravity, 0x8004b0a0: 0.01 * (0.3 * 2.0) * s8, the 2.0 being the float
+	// at 0x801c6c04.
+	float g = 0.006f * s[8];
+	// Held for all s4 frames the jump peaks at s3 (both in velocity units):
+	// the lift per frame solves height = a t^2/2 + (a t)^2/(2g) for a + g.
+	float t = s[4] > 0 ? s[4] : 1;
+	p->jumpLift = (g * t + sqrtf(g * g * t * t + 8.0f * g * s[3])) / (2.0f * t) * VEL;
+	p->jumpHold = s[4];
+	p->airSpeed = 0.1f * s[5] * VEL;
+	p->airAccel = 0.003f * s[6] * VEL;
+	p->gravity = g * VEL;
+	p->landLag = s[7];
+	// Landing impact is measured against the speed of a fall of 6 units (the
+	// float at 0x801c6c08).
+	p->impactSpeed = sqrtf(2.0f * p->gravity * 6.0f);
+	p->afterDash = s[10];
+	p->dashFrames = s[12];
+	p->dashSpeed = 0.1f * s[13] * VEL;
+	p->dashSteer = 0.1f * s[14] * DEG;
+	p->dashPitch = b->dashPitch * DEG;
+	p->dashes = b->dashes;
+	p->radius = 0.45f;    // GUESS: the sweep radius is not read yet
+}
+
+// Without parts.bin: Ray 01 on the standard leg.
+static const MoveParams fallbackParams = {
+	{ 80, 150, 200, 250, 8, 100, 100, 20, 100, 6, 15, 160, 10, 300, 20 },
+	0.08f, 0.0015f, 20.0f * DEG, 0.02486f, 8, 0.14f, 0.003f, 0.006f, 20, 0.268f, 15,
+	10, 0.3f, 2.0f * DEG, 0.0f, 2, 0.45f,
 };
 
 enum { ST_GROUND, ST_AIR, ST_DASH, ST_LAND };
@@ -62,10 +164,14 @@ typedef struct {
 	bool loaded;
 	Mat34* world;
 	float pos[3], vel[3];
-	float yaw;
-	int state, timer, dashesLeft;
+	float yaw;            // facing: (sin yaw, 0, cos yaw)
+	float speed;          // ground speed along the facing (S+0x128)
+	int state, timer;
+	int hold;             // frames the jump may still rise (S+0x13a)
+	int dashesLeft;       // S+0x13b
+	int pendingLag;       // after-dash lag waiting for the landing (S+0xe4)
 	bool ground;
-	int motion;          // MO_*
+	int motion;           // MO_*
 	float frame;
 	AnimState anim;
 	MoveParams p;
@@ -73,7 +179,7 @@ typedef struct {
 
 typedef struct {
 	const MotionSet* set;
-	int id[MO_COUNT];    // index into set, -1 if missing
+	int id[MO_COUNT];     // index into set, -1 if missing
 } Motions;
 
 static float wrapAngle(float a)
@@ -81,6 +187,12 @@ static float wrapAngle(float a)
 	while (a > PI) a -= 2 * PI;
 	while (a < -PI) a += 2 * PI;
 	return a;
+}
+
+static float turnToward(float from, float to, float step)
+{
+	float d = wrapAngle(to - from);
+	return wrapAngle(from + (fabsf(d) < step ? d : copysignf(step, d)));
 }
 
 static void setMotion(Robot* r, int motion)
@@ -101,10 +213,12 @@ static void robotFree(Robot* r)
 	r->loaded = false;
 }
 
+// chara.BIN holds the 34 bodies in stat-table order, five colour variants
+// each (the file sizes repeat in fives), so body b is model 5b.
 static bool robotLoad(Robot* r, int body, char* err, size_t errSize)
 {
 	char path[64];
-	snprintf(path, sizeof path, "romfs:/robo/%03d.crm", body);
+	snprintf(path, sizeof path, "romfs:/robo/%03d.crm", body * 5);
 	r->loaded = modelLoad(&r->body, path, err, errSize);
 	if (r->loaded && r->body.skinned)
 		r->world = malloc(r->body.jointCount * sizeof(Mat34));
@@ -116,9 +230,9 @@ static void robotSpawn(Robot* r, const float* at, float yaw)
 	memcpy(r->pos, at, sizeof r->pos);
 	memset(r->vel, 0, sizeof r->vel);
 	r->yaw = yaw;
+	r->speed = 0;
 	r->state = ST_AIR;
-	r->timer = 0;
-	r->dashesLeft = 0;
+	r->timer = r->hold = r->dashesLeft = r->pendingLag = 0;
 	r->ground = false;
 	r->motion = -1;
 	r->anim.hasLast = false;
@@ -127,87 +241,99 @@ static void robotSpawn(Robot* r, const float* at, float yaw)
 }
 
 // One frame of movement. move is the wanted direction on the ground plane
-// (length 0-1); jump is the button's press this frame.
-static void robotStep(Robot* r, const Collision* col, const float move[2], bool jump)
+// (length 0-1); press and held are the jump button.
+static void robotStep(Robot* r, const Collision* col, const float move[2], bool press, bool held)
 {
 	const MoveParams* p = &r->p;
 	float mag = sqrtf(move[0] * move[0] + move[1] * move[1]);
-	float hv[2] = { r->vel[0], r->vel[2] };
+	if (mag > 1.0f) mag = 1.0f;
 
 	switch (r->state) {
-	case ST_GROUND:
-	case ST_LAND: {
-		bool canAct = r->state == ST_GROUND;
-		if (r->state == ST_LAND && --r->timer <= 0)
+	case ST_LAND:
+		// Landing lag: no control. GUESS: the robot just slows to a stop.
+		r->speed -= r->speed < p->runAccel ? r->speed : p->runAccel;
+		if (--r->timer <= 0)
 			r->state = ST_GROUND;
-		float want[2] = { 0, 0 };
-		if (canAct && mag > 0.01f) {
-			want[0] = move[0] * p->runSpeed;
-			want[1] = move[1] * p->runSpeed;
-			float target = atan2f(move[0], move[1]);
-			float d = wrapAngle(target - r->yaw);
-			r->yaw = wrapAngle(r->yaw + (fabsf(d) < p->turnRate ? d : copysignf(p->turnRate, d)));
-		}
-		float acc = mag > 0.01f && canAct ? p->runAccel : p->runDecel;
-		for (int a = 0; a < 2; a++) {
-			float dv = want[a] - hv[a];
-			hv[a] += fabsf(dv) < acc ? dv : copysignf(acc, dv);
-		}
-		if (canAct && jump) {
+		r->vel[0] = sinf(r->yaw) * r->speed;
+		r->vel[2] = cosf(r->yaw) * r->speed;
+		break;
+	case ST_GROUND: {
+		// Turn the facing toward the stick, then run along the facing at a
+		// speed that eases toward the stick's share of the top speed.
+		if (mag > 0.01f)
+			r->yaw = turnToward(r->yaw, atan2f(move[0], move[1]), p->turn);
+		float target = p->runSpeed * mag;
+		float d = target - r->speed;
+		r->speed += fabsf(d) < p->runAccel ? d : copysignf(p->runAccel, d);
+		r->vel[0] = sinf(r->yaw) * r->speed;
+		r->vel[2] = cosf(r->yaw) * r->speed;
+		if (press) {
+			// The run carries into the jump; the lift comes from holding.
 			r->state = ST_AIR;
-			r->vel[1] = p->jumpSpeed;
-			r->dashesLeft = p->airDashes;
+			r->hold = p->jumpHold;
+			r->dashesLeft = p->dashes;
+			r->speed = 0;
 			setMotion(r, MO_JUMP);
 		}
 		break;
 	}
 	case ST_AIR:
-		if (mag > 0.01f) {
-			for (int a = 0; a < 2; a++) {
-				float dv = move[a] * p->airSpeed - hv[a];
-				hv[a] += fabsf(dv) < p->airAccel ? dv : copysignf(p->airAccel, dv);
+		if (r->hold > 0) {
+			if (held) {
+				r->vel[1] += p->jumpLift;
+				r->hold--;
+			} else {
+				r->hold = 0;
 			}
 		}
-		if (jump && r->dashesLeft > 0) {
-			// Air dash: the stick's direction, or straight ahead without it.
-			float dir[2] = { sinf(r->yaw), cosf(r->yaw) };
-			if (mag > 0.01f) {
-				dir[0] = move[0] / mag;
-				dir[1] = move[1] / mag;
-				r->yaw = atan2f(dir[0], dir[1]);
-			}
+		if (press && r->dashesLeft > 0) {
+			// Air dash: the stick's direction, or the facing without it.
+			if (mag > 0.01f)
+				r->yaw = atan2f(move[0], move[1]);
 			r->dashesLeft--;
 			r->state = ST_DASH;
 			r->timer = p->dashFrames;
-			hv[0] = dir[0] * p->dashSpeed;
-			hv[1] = dir[1] * p->dashSpeed;
-			r->vel[1] = p->dashLift;
+			r->hold = 0;
 			setMotion(r, MO_DASH);
+			break;
+		}
+		// Steer in the air, capped at the air speed.
+		r->vel[0] += move[0] * p->airAccel;
+		r->vel[2] += move[1] * p->airAccel;
+		{
+			float h = sqrtf(r->vel[0] * r->vel[0] + r->vel[2] * r->vel[2]);
+			if (h > p->airSpeed) {
+				r->vel[0] *= p->airSpeed / h;
+				r->vel[2] *= p->airSpeed / h;
+			}
 		}
 		break;
 	case ST_DASH:
+		break;
+	}
+	if (r->state == ST_DASH) {
+		// Flat at the dash speed, pitched up by the body's dash angle, the
+		// stick turning it a little each frame.
+		if (mag > 0.01f)
+			r->yaw = turnToward(r->yaw, atan2f(move[0], move[1]), p->dashSteer);
+		r->vel[0] = sinf(r->yaw) * cosf(p->dashPitch) * p->dashSpeed;
+		r->vel[1] = sinf(p->dashPitch) * p->dashSpeed;
+		r->vel[2] = cosf(r->yaw) * cosf(p->dashPitch) * p->dashSpeed;
 		if (--r->timer <= 0) {
 			r->state = ST_AIR;
-			hv[0] *= 0.35f;
-			hv[1] *= 0.35f;
+			r->pendingLag = p->afterDash;
 			setMotion(r, MO_JUMP);
 			r->frame = 1e6f;
 		}
-		break;
+	} else {
+		r->vel[1] -= p->gravity;   // on the ground too: it keeps the floor contact
 	}
-	r->vel[0] = hv[0];
-	r->vel[2] = hv[1];
-	if (r->state == ST_DASH)
-		r->vel[1] *= 0.9f;          // the dash holds its height
-	else
-		r->vel[1] -= p->gravity;
-	if (r->vel[1] < -p->maxFall)
-		r->vel[1] = -p->maxFall;
 
 	// Sub-step so no step moves more than half the radius.
 	float speed = sqrtf(r->vel[0] * r->vel[0] + r->vel[1] * r->vel[1] + r->vel[2] * r->vel[2]);
 	int steps = 1 + (int)(speed / (p->radius * 0.5f));
 	bool ground = false;
+	float fall = -r->vel[1];
 	for (int s = 0; s < steps; s++) {
 		float c[3] = { r->pos[0] + r->vel[0] / steps, r->pos[1] + p->radius + r->vel[1] / steps,
 			r->pos[2] + r->vel[2] / steps };
@@ -230,15 +356,27 @@ static void robotStep(Robot* r, const Collision* col, const float move[2], bool 
 		r->pos[2] = c[2];
 	}
 	bool wasAir = r->state == ST_AIR || r->state == ST_DASH;
-	if (ground && wasAir && r->vel[1] <= 0.0f) {
-		r->state = ST_LAND;
-		r->timer = p->landFrames;
+	if (ground && wasAir && fall > 0.0f) {
+		// Landing lag, 0x8004b0a0: s7 frames scaled by how hard the landing
+		// was against a 6-unit fall, plus whatever an air dash left owing.
+		float impact = fall / p->impactSpeed;
+		if (impact > 1.0f) impact = 1.0f;
+		int lag = (int)(p->landLag * impact + r->pendingLag);
+		r->pendingLag = 0;
+		r->hold = 0;
 		r->vel[1] = 0;
-		setMotion(r, MO_LAND);
+		r->speed = 0;
+		if (lag > 0) {
+			r->state = ST_LAND;
+			r->timer = lag;
+			setMotion(r, MO_LAND);
+		} else {
+			r->state = ST_GROUND;
+		}
 	} else if (!ground && !wasAir) {
-		// Walked off a ledge.
+		// Walked off a ledge: the dash count is whatever the last jump left.
 		r->state = ST_AIR;
-		r->dashesLeft = p->airDashes;
+		r->hold = 0;
 		setMotion(r, MO_JUMP);
 		r->frame = 1e6f;
 	}
@@ -246,12 +384,8 @@ static void robotStep(Robot* r, const Collision* col, const float move[2], bool 
 		r->vel[1] = 0;
 	r->ground = ground;
 
-	if (r->state == ST_GROUND) {
-		float hs = sqrtf(r->vel[0] * r->vel[0] + r->vel[2] * r->vel[2]);
-		setMotion(r, hs > p->runSpeed * 0.25f ? MO_RUN : MO_STAND);
-	} else if (r->state == ST_LAND && r->timer <= 0) {
-		setMotion(r, MO_STAND);
-	}
+	if (r->state == ST_GROUND)
+		setMotion(r, r->speed > p->runSpeed * 0.1f ? MO_RUN : MO_STAND);
 }
 
 static void robotAnimate(Robot* r, const Motions* mo)
@@ -262,8 +396,7 @@ static void robotAnimate(Robot* r, const Motions* mo)
 		bool loop = r->motion == MO_STAND || r->motion == MO_RUN;
 		float rate = 1.0f;
 		if (r->motion == MO_RUN) {
-			float hs = sqrtf(r->vel[0] * r->vel[0] + r->vel[2] * r->vel[2]);
-			rate = hs / r->p.runSpeed;
+			rate = r->speed / r->p.runSpeed;
 			if (rate < 0.4f) rate = 0.4f;
 		}
 		r->frame += rate;
@@ -289,26 +422,28 @@ static void robotDraw(Robot* r, const Model* parts, const bool* havePart,
 #endif
 // A fixed run for the emulator, one arena every 10 s: drop in, run, jump,
 // air dash, run into an obstacle and a wall. Moves are in camera space
-// (x right, y forward).
+// (x right, y forward); keys are pressed on the first frame of a cue and
+// held to its end.
 typedef struct { int from, to; float x, y; u32 keys; } Cue;
 static const Cue script[] = {
 	{  60, 150,  0.0f,  1.0f, 0 },        // run forward
-	{ 150, 151,  0.0f,  1.0f, KEY_B },    // jump
+	{ 150, 162,  0.0f,  1.0f, KEY_B },    // full jump: held past the hold window
 	{ 175, 176,  1.0f,  0.0f, KEY_B },    // air dash right
 	{ 240, 360, -1.0f,  0.0f, 0 },        // run left, into whatever is there
-	{ 360, 361, -1.0f,  0.0f, KEY_B },    // jump
+	{ 360, 361, -1.0f,  0.0f, KEY_B },    // tapped jump: a hop
 	{ 385, 386,  0.0f, -1.0f, KEY_B },    // air dash back
 	{ 450, 560,  0.7f, -0.7f, 0 },        // run diagonally to a wall
 };
 #define SCRIPT_FRAMES 600
-static void scripted(int t, float* x, float* y, u32* down)
+static void scripted(int t, float* x, float* y, u32* down, u32* held)
 {
 	*x = *y = 0;
-	*down = 0;
+	*down = *held = 0;
 	for (u32 i = 0; i < sizeof script / sizeof script[0]; i++)
 		if (t >= script[i].from && t < script[i].to) {
 			*x = script[i].x;
 			*y = script[i].y;
+			*held |= script[i].keys;
 			if (t == script[i].from) *down |= script[i].keys;
 		}
 }
@@ -388,6 +523,11 @@ void battleRun(C3D_RenderTarget* top, const MotionSet* set, const BattleRoster* 
 	memset(parts, 0, sizeof parts);
 	int partIndex[PART_COUNT] = { 0, 0, 0, 0 };
 
+	PartStats stats;
+	bool haveStats = statsLoad(&stats, "romfs:/stats/parts.bin");
+	int bodies = roster->bodies / 5;
+	if (haveStats && (int)stats.bodies < bodies) bodies = stats.bodies;
+	if (bodies < 1) bodies = 1;
 	int arena = 0, body = 0;
 	bool reloadStage = true, reloadRobots = true, info = true;
 	char err[96] = "";
@@ -405,7 +545,7 @@ void battleRun(C3D_RenderTarget* top, const MotionSet* set, const BattleRoster* 
 
 	while (aptMainLoop()) {
 		hidScanInput();
-		u32 down = hidKeysDown();
+		u32 down = hidKeysDown(), held = hidKeysHeld();
 		circlePosition pad;
 		hidCircleRead(&pad);
 		float sx = abs(pad.dx) > 15 ? pad.dx / 150.0f : 0.0f;
@@ -416,18 +556,18 @@ void battleRun(C3D_RenderTarget* top, const MotionSet* set, const BattleRoster* 
 			if (arena + AUTOTEST_STEP >= roster->arenas)
 				break;
 			arena += AUTOTEST_STEP;
-			body = (body + 7) % roster->bodies;
+			body = (body + 7) % bodies;
 			for (int k = 0; k < PART_COUNT; k++) partIndex[k] += 3;
 			reloadStage = reloadRobots = true;
 		}
-		scripted(autoFrame++, &sx, &sy, &down);
+		scripted(autoFrame++, &sx, &sy, &down, &held);
 #endif
 		if (down & KEY_START)
 			break;
 		if (down & KEY_DRIGHT) { arena = (arena + 1) % roster->arenas; reloadStage = true; }
 		if (down & KEY_DLEFT) { arena = (arena + roster->arenas - 1) % roster->arenas; reloadStage = true; }
-		if (down & KEY_DUP) { body = (body + 1) % roster->bodies; reloadRobots = true; }
-		if (down & KEY_DDOWN) { body = (body + roster->bodies - 1) % roster->bodies; reloadRobots = true; }
+		if (down & KEY_DUP) { body = (body + 1) % bodies; reloadRobots = true; }
+		if (down & KEY_DDOWN) { body = (body + bodies - 1) % bodies; reloadRobots = true; }
 		if (down & KEY_SELECT) {
 			for (int k = 0; k < PART_COUNT; k++) partIndex[k]++;
 			reloadRobots = true;
@@ -447,8 +587,13 @@ void battleRun(C3D_RenderTarget* top, const MotionSet* set, const BattleRoster* 
 					robotFree(&robots[k]);
 					// The two robots need their own copy of the body: envelope
 					// batches are skinned into the model's own vertex buffer.
-					robotLoad(&robots[k], (body + k * 5) % roster->bodies, err, sizeof err);
-					robots[k].p = defaultParams;
+					int b = (body + k * 5) % bodies;
+					robotLoad(&robots[k], b, err, sizeof err);
+					// The leg models and the leg stat table share an order.
+					if (haveStats)
+						moveParams(&stats.body[b], &stats.leg[partIndex[PART_LEG] % stats.legs], &robots[k].p);
+					else
+						robots[k].p = fallbackParams;
 				}
 				loadParts(parts, havePart, roster, partIndex);
 			}
@@ -469,11 +614,11 @@ void battleRun(C3D_RenderTarget* top, const MotionSet* set, const BattleRoster* 
 			if (fl < 1e-4f) { fx = 0; fz = -1; fl = 1; }
 			fx /= fl; fz /= fl;
 			float move[2] = { fx * sy - fz * sx, fz * sy + fx * sx };
-			robotStep(me, &stage.col, move, down & KEY_B);
+			robotStep(me, &stage.col, move, down & KEY_B, held & KEY_B);
 			float none[2] = { 0, 0 };
 			// The other robot stands its ground facing this one.
 			foe->yaw = atan2f(me->pos[0] - foe->pos[0], me->pos[2] - foe->pos[2]);
-			robotStep(foe, &stage.col, none, false);
+			robotStep(foe, &stage.col, none, false, false);
 			for (int k = 0; k < 2; k++)
 				if (robots[k].pos[1] < stage.col.lo[1] - 15.0f)
 					robotSpawn(&robots[k], stage.spawn[k], robots[k].yaw);
@@ -512,22 +657,28 @@ void battleRun(C3D_RenderTarget* top, const MotionSet* set, const BattleRoster* 
 			info = false;
 			consoleClear();
 			printf("\x1b[1;1HCustom Robo - battle test\n\n");
-			printf("Arena %d / %d   body %03d\n", arena + 1, roster->arenas, body);
-			printf("parts g%d b%d p%d l%d\n", partIndex[0], partIndex[1], partIndex[2], partIndex[3]);
+			printf("Arena %d / %d\n", arena + 1, roster->arenas);
+			printf("Body %d %s   leg %d\n", body, haveStats ? stats.body[body].name : "",
+				partIndex[PART_LEG] % (roster->legs ? roster->legs : 1));
+			printf("parts g%d b%d p%d%s\n", partIndex[0], partIndex[1], partIndex[2], haveStats ? "" : "  (no stats)");
 			if (err[0]) printf("%s\n", err);
 			if (ready) {
 				printf("\nstate  %-10s dashes %d\n", stateName[me->state], me->dashesLeft);
 				printf("pos    %6.2f %6.2f %6.2f\n", me->pos[0], me->pos[1], me->pos[2]);
 				printf("vel    %6.3f %6.3f %6.3f\n", me->vel[0], me->vel[1], me->vel[2]);
 				printf("motion %s\n", me->motion >= 0 ? motionName[me->motion] : "-");
+				const int* st = me->p.s;
+				printf("run %d/%d turn %d  jump %d/%d  g %d\n", st[0], st[1], st[2], st[3], st[4], st[8]);
+				printf("air %d/%d  dash %dx %d@%d  lag %d\n", st[5], st[6], me->p.dashes, st[12], st[13], st[7]);
 			}
 			printf("\n%4.1f fps   game speed %3.0f%%\n", fps, speed * 100.0f);
 			printf("CPU %5.2f ms   GPU %5.2f ms\n", C3D_GetProcessingTime(), C3D_GetDrawingTime());
 			printf("\nCircle pad   run\n");
-			printf("B            jump / air dash\n");
+			printf("B            jump (hold: higher)\n");
+			printf("B in the air air dash\n");
 			printf("D-pad < >    arena\n");
 			printf("D-pad ^ v    robot body\n");
-			printf("SELECT       next parts\n");
+			printf("SELECT       next parts and leg\n");
 			printf("START        model viewer\n");
 		}
 
@@ -557,5 +708,6 @@ void battleRun(C3D_RenderTarget* top, const MotionSet* set, const BattleRoster* 
 	for (int k = 0; k < PART_COUNT; k++)
 		if (havePart[k]) modelFree(&parts[k]);
 	stageFree(&stage);
+	statsFree(&stats);
 	consoleClear();
 }
