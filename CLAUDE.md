@@ -53,6 +53,12 @@ docker run --rm -v "C:/Users/Alexander/source/repos/custom-robo-3ds:/proj" -w /p
   the stride comes from the gap to the next block, not from a field. The game
   sweeps a sphere per block sphere, then per face. The entry's trailing section
   is runtime scratch, not data. Cooked to `romfs/collide` as a viewer category.
+- Effects (`tools/effects.py`): each `*_effect.BIN` SFD entry is a container of
+  its own (u32 count, then count+1 offsets) holding two standard HSD archives;
+  `efc_common.dbn` is that container without the SFD, `leg_effect.BIN` is plain
+  HSD. A ModelSet's slots 1-3 are NULL-terminated *arrays* of AnimJoint /
+  MatAnimJoint / ShapeAnimJoint roots, one per model, not single pointers.
+  Animation is stock HSD AObj/FObj, not Custom Robo's own motion format.
 - Robots and story characters share the 19-slot rig + 32 dimension floats and
   must be cooked as CRM2 (`cook.py SKINNED`).
 
