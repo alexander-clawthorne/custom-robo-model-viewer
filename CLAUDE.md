@@ -45,6 +45,16 @@ docker run --rm -v "C:/Users/Alexander/source/repos/custom-robo-3ds:/proj" -w /p
 - Robots and story characters share the 19-slot rig + 32 dimension floats and
   must be cooked as CRM2 (`cook.py SKINNED`).
 
+## Keeping token use down
+
+- Hand wide searches to subagents on a cheaper model (Sonnet or Haiku), for
+  example "find every structure in snr_map.BIN" or "which functions read
+  bg_data odd entries". Only their conclusion comes back into this context,
+  not pages of hex dumps or disassembly. Keep the main model for design and
+  for checking what the subagents report.
+- Look at test runs as one contact sheet, not individual screenshots.
+- Start a fresh session per phase; this file and the tracker carry the state.
+
 ## Reverse engineering
 
 - `tools/dol.py` (xref / dis / func) for quick looks at main.dol.
