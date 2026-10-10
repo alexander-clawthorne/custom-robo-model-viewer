@@ -37,11 +37,12 @@ bool modelLoad(Model* m, const char* path, char* err, size_t errSize)
 	const u8* end = file + size;
 	u32 header[2];
 	NEED(28);
-	if (memcmp(at, "CRM1", 4) != 0 && memcmp(at, "CRM2", 4) != 0) {
+	if (memcmp(at, "CRM1", 4) != 0 && memcmp(at, "CRM2", 4) != 0 && memcmp(at, "CRM3", 4) != 0) {
 		snprintf(err, errSize, "not a CRM file");
 		goto fail;
 	}
 	m->skinned = at[3] == '2';
+	m->isPart = at[3] == '3';
 	memcpy(header, at + 4, 8);
 	memcpy(m->centre, at + 12, 12);
 	memcpy(&m->radius, at + 24, 4);
@@ -100,7 +101,8 @@ bool modelLoad(Model* m, const char* path, char* err, size_t errSize)
 			if (m->slots[r] < 0 || (u32)m->slots[r] >= m->jointCount)
 				m->hasRig = false;
 	}
-	const size_t head = m->skinned ? 16 : 12;
+	// Skinned and part batches both carry an extra s32 before the count.
+	const size_t head = (m->skinned || m->isPart) ? 16 : 12;
 
 	// First pass: count vertices; second: copy into one linear VBO.
 	const u8* batchStart = at;
@@ -134,8 +136,11 @@ bool modelLoad(Model* m, const char* path, char* err, size_t errSize)
 		memcpy(&b->flags, at + 4, 4);
 		memcpy(&b->count, at + head - 4, 4);
 		b->joint = -1;
+		b->root = 0;
 		if (m->skinned)
 			memcpy(&b->joint, at + 8, 4);
+		if (m->isPart)
+			memcpy(&b->root, at + 8, 4);
 		at += head;
 		b->first = first;
 		memcpy(m->vbo + first, at, b->count * sizeof(ModelVertex));

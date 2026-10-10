@@ -35,9 +35,30 @@ def scene_roots(d, scene):
 
 ROBO_ARCHIVES = {'chara': 'chara.BIN', 'snrchara': 'scenario_us/snr_chara.BIN',
                  'gun': 'weapon_gun.BIN', 'bom': 'weapon_bom.BIN', 'pod': 'weapon_pod.BIN', 'leg': 'weapon_leg.BIN'}
-# Viewed alone, these parts are shown without the rotation they are mounted
-# at on the robot (see hsd.walk_joints).
-UPRIGHT_ALONE = {'gun'}
+# Weapon parts. A part root joint stores an SRT (guns -90 deg about X, pods
+# 90/0/90 and so on) that looks like a mount rotation and is not: the draw code
+# at 0x80039fac writes the root's world matrix itself and sets JOBJ_USER_DEF_MTX
+# | MTX_INDEPEND_PARENT | MTX_INDEPEND_SRT (0x3800000), so the stored SRT never
+# reaches the screen. The geometry is already in the mount joint's frame, so
+# these files are read with that joint's matrix dropped (hsd.walk_joints).
+PART_ARCHIVES = ('gun', 'bom', 'pod', 'leg')
+
+# Where each part root hangs off the body, read from that same function: it
+# copies the robot's solved matrix out[k] into the part root's world matrix and
+# scales the basis by PART_SCALE -- no rotation anywhere (the call that looked
+# like one, 0x8001da70, scales each axis). Rig slot r is driven by out[r+1]
+# (tools/pose.py), so slot = k - 1. Of a part's roots only these are drawn.
+#   (archive, root index, body rig slot)
+ATTACH = (('gun', 0, 8),    # out[9]  arm2 elbow: the gun is the forearm
+          ('bom', 1, 4),    # out[5]  arm1 elbow
+          ('pod', 0, 0),    # out[1]  spine, one pod each side
+          ('pod', 1, 0),
+          ('leg', 5, 12),   # out[13] leg1 knee
+          ('leg', 3, 13),   # out[14] leg1 foot
+          ('leg', 4, 16),   # out[17] leg2 knee
+          ('leg', 1, 17))   # out[18] leg2 foot
+# *(r2 - 0x7b18) in the same function: parts are modelled ten times robot size.
+PART_SCALE = 0.1
 SCENE_ARCHIVES = {'bg': ('bg_data.BIN', 2), 'snrobj': ('scenario_us/snr_obj.BIN', 1), 'legfx': ('leg_effect.BIN', 1)}
 # Weapon and hit effects. Unlike leg_effect.BIN, each SFD entry is a small
 # container of its own -- u32 count, then count+1 offsets, the last being the
@@ -134,7 +155,7 @@ def load_model(archive, index=0):
         raise ValueError(archive)
     joints, meshes = [], []
     for model, root in enumerate(roots):
-        j, m = hsd.read_meshes(d, root, mount_rotation=archive not in UPRIGHT_ALONE)
+        j, m = hsd.read_meshes(d, root, mount=archive not in PART_ARCHIVES)
         for mesh in m:
             mesh['model'] = model
         joints += j; meshes += m

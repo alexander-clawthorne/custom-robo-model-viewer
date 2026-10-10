@@ -221,18 +221,21 @@ class Joint:
         self.ik = ik_type(d, off)
         self.bone_length = bone_length(d, off) if d.ptr(off + 0x3C) is not None else 0.0
 
-def walk_joints(d, root, mount_rotation=True):
+def walk_joints(d, root, mount=True):
     """All joints of a JObj tree, depth first, with bind-pose world matrices.
-    mount_rotation=False drops the top-level joint's rotation: weapon parts
-    store the angle they are mounted at on the robot there (guns: -90 deg X,
-    which lays them on their side when viewed alone)."""
+    mount=False drops the top-level joint's local matrix entirely. A weapon
+    part stores there the rotation (and sometimes the offset) it is mounted
+    at on the robot; the game never uses that joint's own SRT -- it writes
+    the joint's world matrix itself and sets JOBJ_MTX_INDEPEND_PARENT|SRT
+    (0x80039fac) -- so for assembly the mount matrix is applied separately
+    (models.part_mounts) and viewing a part alone drops it."""
     joints, by_off = [], {}
     def visit(off, parent_off, parent_world):
         while off is not None:
             if ik_type(d, off) == EFFECTOR:
                 world = effector_world(d, off, parent_off, parent_world)
-            elif parent_off is None and not mount_rotation:
-                world = srt(d.vec3(off + 0x20), (0.0, 0.0, 0.0), d.vec3(off + 0x2C))
+            elif parent_off is None and not mount:
+                world = IDENTITY
             else:
                 world = mat_mul(parent_world, local(d, off))
             parent = by_off[parent_off].index if parent_off is not None else -1
@@ -292,9 +295,9 @@ def envelopes(d, at):
 # (tools/preview.py); 'model' leaves them untouched, 'joint' applies the joint.
 SINGLE_ENVELOPE = 'model'
 
-def read_meshes(d, root, mount_rotation=True):
+def read_meshes(d, root, mount=True):
     """Bind-pose triangles per DObj, with its material."""
-    joints, by_off = walk_joints(d, root, mount_rotation)
+    joints, by_off = walk_joints(d, root, mount)
     meshes = []
     for j in joints:
         if j.flags & 0x4030:  # JOBJ_SPLINE / JOBJ_PTCL reuse the DObj slot; 0x10 hidden

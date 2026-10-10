@@ -15,7 +15,7 @@ import gxtex
 from models import load_model
 
 def texture_image(d, tex, cache):
-    key = tex['data']
+    key = (id(d), tex['data'])
     if key not in cache:
         try:
             tlut = None
@@ -71,7 +71,9 @@ def render(d, meshes, yaw, size=512, pitch=0.25, cull=False):
         col = np.array([v['clr'][:3] for v in tri], np.float32)
         c = w0[..., None] * col[0] + w1[..., None] * col[1] + w2[..., None] * col[2]
         texs = mesh['material']['textures']
-        tex = texture_image(d, texs[0], cache) if texs else None
+        # A mesh may carry its own data block: an assembled robot mixes the
+        # body's archive with each weapon part's (tools/assemble.py).
+        tex = texture_image(mesh.get('data', d), texs[0], cache) if texs else None
         if tex is not None:
             uv = np.array([v['uv'] for v in tri], np.float32)
             u = w0 * uv[0, 0] + w1 * uv[1, 0] + w2 * uv[2, 0]

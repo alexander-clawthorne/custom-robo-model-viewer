@@ -12,6 +12,11 @@
                write, 8 alpha test), u32 vertex count, then vertices:
                f32 pos[3], f32 uv[2], f32 normal[3], u8 rgba[4]
 Batches are ordered opaque first, then blended.
+
+'CRM3' is a weapon part (gun, bomb, pod, legs): as CRM1, but each batch
+carries an s32 root index before its vertex count, so the viewer can draw one
+root at a time -- models.ATTACH says which root goes on which rig slot, and a
+part file holds more roots than the robot ever shows.
 """
 import argparse, colorsys, json, math, struct, sys
 from pathlib import Path
@@ -20,7 +25,7 @@ from PIL import Image
 sys.path.insert(0, str(Path(__file__).parent))
 import gxtex, hsd
 from collision import ARENAS, arena as arena_collision
-from models import EFFECT_ARCHIVES, FILES, RPG_ARCHIVES, effect_subs, load_model
+from models import EFFECT_ARCHIVES, FILES, PART_ARCHIVES, RPG_ARCHIVES, effect_subs, load_model
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / 'romfs'
@@ -81,6 +86,7 @@ SKINNED = {'chara', 'snrchara'}  # both carry the 19-slot rig and 32 dimensions
 
 def cook(archive, index):
     skinned = archive in SKINNED
+    part = archive in PART_ARCHIVES
     d, joints, meshes = load_model(archive, index)
     if not any(mesh['tris'] for mesh in meshes):
         return None, {'skipped': 'no triangles'}   # effect emitters are joints only
@@ -127,7 +133,7 @@ def cook(archive, index):
             return struct.pack('<8f4B', *pos, u, 1.0 - t, *nrm, *rgba)
         if not skinned:
             verts = b''.join(vertex(v, False) for tri in mesh['tris'] for v in tri)
-            batches.append((ti, flags, len(mesh['tris']) * 3, verts, -1, b''))
+            batches.append((ti, flags, len(mesh['tris']) * 3, verts, -1, b'', mesh['model']))
             continue
         # Skinned: one batch per binding. Rigid triangles keep joint-local
         # vertices; envelope triangles keep model-space vertices plus up to
@@ -147,7 +153,8 @@ def cook(archive, index):
                         pairs = list(b) if kind == 'env' else [(b, 1.0)]
                         pairs = (pairs + [(0, 0.0)] * 4)[:4]
                         weights += struct.pack('<4B4f', *(j for j, _ in pairs), *(w for _, w in pairs))
-            batches.append((ti, flags, len(tris) * 3, verts, -1 if key == 'env' else key, weights))
+            batches.append((ti, flags, len(tris) * 3, verts, -1 if key == 'env' else key, weights,
+                            mesh['model']))
     batches.sort(key=lambda b: bool(b[1] & BLEND))
     pts = np.array([v['pos'] for m in meshes for t in m['tris'] for v in t], np.float32)
     # Frame the play area, not the skybox: arenas span about +-8 units, skies +-500.
@@ -156,14 +163,17 @@ def cook(archive, index):
         pts = near if len(near) else pts
     centre = (pts.min(0) + pts.max(0)) / 2
     radius = float(np.linalg.norm(pts - centre, axis=1).max())
-    out = bytearray((b'CRM2' if skinned else b'CRM1') + struct.pack('<II4f', len(textures), len(batches), *centre, radius))
+    magic = b'CRM2' if skinned else b'CRM3' if part else b'CRM1'
+    out = bytearray(magic + struct.pack('<II4f', len(textures), len(batches), *centre, radius))
     for (w, h, fmt, pixels), wrap in textures:
         out += struct.pack('<HHBBBBI', w, h, fmt, WRAP.get(wrap[0], 2), WRAP.get(wrap[1], 2), 0, len(pixels)) + pixels
     if skinned:
         out += skeleton_block(archive, index, joints)
-    for ti, flags, count, verts, joint, weights in batches:
+    for ti, flags, count, verts, joint, weights, root in batches:
         if skinned:
             out += struct.pack('<iIiI', ti, flags, joint, count) + verts + weights
+        elif part:
+            out += struct.pack('<iIiI', ti, flags, root, count) + verts
         else:
             out += struct.pack('<iII', ti, flags, count) + verts
     tris = sum(b[2] for b in batches) // 3
@@ -189,13 +199,13 @@ def cook_collision(index):
                     verts += struct.pack('<8f4B', *v, 0.0, 0.0, *face.normal, *rgba)
         count = len(verts) // struct.calcsize('<8f4B')
         if count:
-            batches.append((-1, BLEND | NO_ZWRITE if shell else 0, count, verts, -1, b''))
+            batches.append((-1, BLEND | NO_ZWRITE if shell else 0, count, verts, -1, b'', 0))
     batches.sort(key=lambda b: bool(b[1] & BLEND))    # obstacles first, shell over them
     p = np.array(pts, np.float32)
     centre = (p.min(0) + p.max(0)) / 2
     radius = float(np.linalg.norm(p - centre, axis=1).max())
     out = bytearray(b'CRM1' + struct.pack('<II4f', 0, len(batches), *centre, radius))
-    for ti, flags, count, verts, _, _ in batches:
+    for ti, flags, count, verts, _, _, _ in batches:
         out += struct.pack('<iII', ti, flags, count) + verts
     faces = sum(len(b.faces) for b in blocks)
     return bytes(out), {'blocks': len(blocks), 'faces': faces,
@@ -281,6 +291,12 @@ def main():
             (OUT / folder / 'index.txt').write_bytes(b''.join(n.encode('ascii') + b'\n' for n in names))
             if names:
                 present.append(f'{folder}|{label}')
+    # A third field marks a composite category: 'assembled' draws a romfs/robo
+    # body with one part from each weapon folder attached (src/main.c). It has
+    # no cooked files of its own.
+    have = {line.split('|')[0] for line in present}
+    if {'robo', 'gun', 'bomb', 'pod', 'leg'} <= have:
+        present.insert(1, 'robo|Assembled robot|assembled')
     (OUT / 'categories.txt').write_bytes(''.join(line + '\n' for line in present).encode('ascii'))
 
 if __name__ == '__main__':

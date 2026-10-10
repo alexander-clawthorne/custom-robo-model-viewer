@@ -20,7 +20,28 @@ typedef struct {
 	char* label;
 	char** names;
 	int count;
+	bool assembled;   // draw the body with a weapon part on each mount joint
 } Catalog;
+
+// Where each part root hangs off the body, from the robot draw code at
+// 0x80039fac in main.dol: it writes the solved matrix out[k] straight into the
+// part root's world matrix with JOBJ_USER_DEF_MTX | MTX_INDEPEND_PARENT |
+// MTX_INDEPEND_SRT, so the root's own stored SRT is ignored, and scales the
+// basis by PART_SCALE. Rig slot r is driven by out[r+1], so slot = k - 1.
+#define PART_SCALE 0.1f
+enum { PART_GUN, PART_BOMB, PART_POD, PART_LEG, PART_COUNT };
+static const char* partFolder[PART_COUNT] = { "gun", "bomb", "pod", "leg" };
+static const struct { u8 part, root, slot; } attach[] = {
+	{ PART_GUN,  0, 8 },   // out[9]  arm2 elbow: the gun is the forearm
+	{ PART_BOMB, 1, 4 },   // out[5]  arm1 elbow
+	{ PART_POD,  0, 0 },   // out[1]  spine, one pod each side
+	{ PART_POD,  1, 0 },
+	{ PART_LEG,  5, 12 },  // out[13] leg1 knee
+	{ PART_LEG,  3, 13 },  // out[14] leg1 foot
+	{ PART_LEG,  4, 16 },  // out[17] leg2 knee
+	{ PART_LEG,  1, 17 },  // out[18] leg2 foot
+};
+#define ATTACH_COUNT ((int)(sizeof attach / sizeof attach[0]))
 
 #define MAX_CATALOGS 16
 static Catalog catalogs[MAX_CATALOGS];
@@ -61,14 +82,26 @@ static void loadCategories(void)
 		if (!bar)
 			continue;
 		*bar = 0;
+		char* mode = strchr(bar + 1, '|');
+		if (mode)
+			*mode++ = 0;
 		Catalog* c = &catalogs[catalogCount];
 		c->folder = strdup(line);
 		c->label = strdup(bar + 1);
+		c->assembled = mode && !strcmp(mode, "assembled");
 		loadCatalog(c);
 		if (c->count)
 			catalogCount++;
 	}
 	fclose(f);
+}
+
+static Catalog* findCatalog(const char* folder)
+{
+	for (int k = 0; k < catalogCount; k++)
+		if (!strcmp(catalogs[k].folder, folder))
+			return &catalogs[k];
+	return NULL;
 }
 
 static void sceneInit(void)
@@ -92,7 +125,11 @@ static void sceneInit(void)
 }
 
 // world: per-joint matrices for skinned (CRM2) models, NULL otherwise.
-static void drawModel(const Model* m, const C3D_Mtx* projection, const C3D_Mtx* view, const Mat34* world)
+// world: per-joint matrices for skinned (CRM2) models, NULL otherwise.
+// fixed: one matrix for the whole model, used for an attached weapon part.
+// onlyRoot: draw just that CRM3 root, or -1 for every batch.
+static void drawModelEx(const Model* m, const C3D_Mtx* projection, const C3D_Mtx* view,
+	const Mat34* world, const C3D_Mtx* fixed, int onlyRoot)
 {
 	const C3D_Mtx* modelView = view;
 	C3D_BufInfo* buf = C3D_GetBufInfo();
@@ -105,7 +142,11 @@ static void drawModel(const Model* m, const C3D_Mtx* projection, const C3D_Mtx* 
 	for (u32 i = 0; i < m->batchCount; i++) {
 		const ModelBatch* b = &m->batches[i];
 		bool lit = b->flags & MODEL_LIT;
-		if (world && b->joint >= 0 && (u32)b->joint < m->jointCount) {
+		if (onlyRoot >= 0 && b->root != onlyRoot)
+			continue;
+		if (fixed) {
+			C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, uModelView, fixed);
+		} else if (world && b->joint >= 0 && (u32)b->joint < m->jointCount) {
 			C3D_Mtx joint, mv;
 			mat34ToC3D(&world[b->joint], &joint);
 			Mtx_Multiply(&mv, view, &joint);
@@ -135,6 +176,25 @@ static void drawModel(const Model* m, const C3D_Mtx* projection, const C3D_Mtx* 
 		C3D_DepthTest(true, GPU_GREATER, (b->flags & MODEL_NO_ZWRITE) ? GPU_WRITE_COLOR : GPU_WRITE_ALL);
 		C3D_DrawArrays(GPU_TRIANGLES, b->first, b->count);
 	}
+}
+
+static void drawModel(const Model* m, const C3D_Mtx* projection, const C3D_Mtx* view, const Mat34* world)
+{
+	drawModelEx(m, projection, view, world, NULL, -1);
+}
+
+// A part sits at its rig slot's world matrix with the basis scaled by
+// PART_SCALE -- weapon parts are modelled ten times robot size.
+static void partMatrix(const Mat34* slot, C3D_Mtx* out)
+{
+	// Scale the basis, keep the origin. Goes through mat34ToC3D because a
+	// C3D_FVec stores its components as w, z, y, x -- indexing .c[] by column
+	// writes the matrix scrambled.
+	Mat34 s = *slot;
+	for (int r = 0; r < 3; r++)
+		for (int c = 0; c < 3; c++)
+			s.m[r][c] *= PART_SCALE;
+	mat34ToC3D(&s, out);
 }
 
 int main(void)
@@ -171,11 +231,20 @@ int main(void)
 	int index[MAX_CATALOGS] = { 0 };
 #ifdef AUTOTEST_CATEGORY
 	// make AUTOTEST=1 AUTOCAT=collide: run only that category's models.
-	for (int k = 0; k < catalogCount; k++)
-		if (!strcmp(catalogs[k].folder, AUTOTEST_CATEGORY)) { mode = k; break; }
+	// Two categories share the romfs/robo folder, so AUTOCAT=assembled selects
+	// the composite one by its mode rather than by folder name.
+	for (int k = 0; k < catalogCount; k++) {
+		bool hit = !strcmp(AUTOTEST_CATEGORY, "assembled") ? catalogs[k].assembled
+			: !strcmp(catalogs[k].folder, AUTOTEST_CATEGORY);
+		if (hit) { mode = k; break; }
+	}
 #endif
 	Model model;
 	memset(&model, 0, sizeof model);
+	Model parts[PART_COUNT];
+	bool havePart[PART_COUNT] = { false };
+	int partIndex[PART_COUNT] = { 0 };
+	memset(parts, 0, sizeof parts);
 	bool reload = true, loaded = false, spin = true;
 	float yaw = 0.6f, pitch = 0.25f, zoom = 1.0f;
 	char err[96] = "";
@@ -258,12 +327,30 @@ int main(void)
 			cat = &catalogs[mode];
 			loaded = false;
 			err[0] = 0;
+			for (int k = 0; k < PART_COUNT; k++) {
+				if (havePart[k])
+					modelFree(&parts[k]);
+				havePart[k] = false;
+			}
 			if (catalogCount && cat->count) {
 				char path[96];
 				snprintf(path, sizeof path, "romfs:/%s/%s", cat->folder, cat->names[index[mode]]);
 				loaded = modelLoad(&model, path, err, sizeof err);
 				if (loaded && model.skinned)
 					world = malloc(model.jointCount * sizeof(Mat34));
+				// Assembled: one part from each weapon folder, stepping with the
+				// body so a sweep shows different combinations.
+				if (loaded && cat->assembled) {
+					for (int k = 0; k < PART_COUNT; k++) {
+						Catalog* pc = findCatalog(partFolder[k]);
+						if (!pc || !pc->count)
+							continue;
+						partIndex[k] = index[mode] % pc->count;
+						snprintf(path, sizeof path, "romfs:/%s/%s", pc->folder, pc->names[partIndex[k]]);
+						char perr[96];
+						havePart[k] = modelLoad(&parts[k], path, perr, sizeof perr);
+					}
+				}
 				active = strcmp(cat->folder, "snrchara") == 0 ? 1 : 0;
 				animState.hasLast = false;
 				frame = 0;
@@ -334,6 +421,21 @@ int main(void)
 				// Joints sit inside the meshes; pad for heads, shoulders and weapons.
 				camRadius = sqrtf(d2) * 0.5f * 1.05f;
 				if (camRadius < model.radius) camRadius = model.radius;
+				// Weapon parts stick out past the body: fit them too.
+				for (int k = 0; k < ATTACH_COUNT; k++) {
+					if (!havePart[attach[k].part] || !model.hasRig)
+						continue;
+					s16 joint = model.slots[attach[k].slot];
+					if (joint < 0 || (u32)joint >= model.jointCount)
+						continue;
+					float d = 0.0f;
+					for (int a = 0; a < 3; a++) {
+						float v = world[joint].m[a][3] - camCentre[a];
+						d += v * v;
+					}
+					float reach = sqrtf(d) + parts[attach[k].part].radius * PART_SCALE;
+					if (reach > camRadius) camRadius = reach;
+				}
 			}
 			animPose(&model, haveMotions ? motions : NULL, playing, frame, mirror, &animState, world);
 		}
@@ -361,11 +463,28 @@ int main(void)
 			Mtx_RotateY(&view, yaw, true);
 			Mtx_Translate(&view, -camCentre[0], -camCentre[1], -camCentre[2], true);
 			drawModel(&model, &projection, &view, world);
+			if (world && model.hasRig) {
+				for (int k = 0; k < ATTACH_COUNT; k++) {
+					const Model* pm = &parts[attach[k].part];
+					if (!havePart[attach[k].part])
+						continue;  // a root with no batches simply draws nothing
+					s16 joint = model.slots[attach[k].slot];
+					if (joint < 0 || (u32)joint >= model.jointCount)
+						continue;
+					C3D_Mtx part, mv;
+					partMatrix(&world[joint], &part);
+					Mtx_Multiply(&mv, &view, &part);
+					drawModelEx(pm, &projection, &view, NULL, &mv, attach[k].root);
+				}
+			}
 		}
 		C3D_FrameEnd(0);
 	}
 
 	if (loaded) modelFree(&model);
+	for (int k = 0; k < PART_COUNT; k++)
+		if (havePart[k])
+			modelFree(&parts[k]);
 	free(world);
 	for (int k = 0; k < 2; k++)
 		if (haveSet[k]) motionSetFree(&sets[k]);

@@ -18,6 +18,7 @@ typedef struct {
 	u32 first;      // first vertex in the shared VBO
 	u32 count;
 	int joint;      // CRM2: vertices are local to this joint; -1 = envelope (CPU skinned)
+	int root;       // CRM3: which root of a weapon part this batch belongs to
 	ModelVertex* envSource;  // envelope batches: model-space source vertices
 	u8 (*envJoint)[4];
 	float (*envWeight)[4];
@@ -49,6 +50,9 @@ typedef struct {
 	bool hasRig;
 	s16 slots[19];        // joint index per rig slot
 	float dims[32];       // the robot's limb dimensions
+	// CRM3 (weapon parts): batches are tagged with the root they belong to, so
+	// one root can be drawn on its own (see attach[] in src/main.c).
+	bool isPart;
 } Model;
 
 // Loads a cooked .crm file. Returns false (with a message in err) on failure.
