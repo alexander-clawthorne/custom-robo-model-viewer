@@ -76,7 +76,10 @@ def pick_texture(material):
             return t
     return next((t for t in material['textures'] if t['flags'] & 0xF == 0), None)
 
+SKINNED = {'chara'}
+
 def cook(archive, index):
+    skinned = archive in SKINNED
     d, joints, meshes = load_model(archive, index)
     textures, tex_index, batches = [], {}, []
     for mesh in meshes:
@@ -106,21 +109,42 @@ def cook(archive, index):
             flags |= BLEND | NO_ZWRITE
         elif ti >= 0:
             flags |= ALPHA_TEST
-        verts = bytearray()
+        def vertex(v, skinned):
+            c = v['clr'] if mode & 0x2 else (1.0, 1.0, 1.0, 1.0)
+            if ti < 0 and not mode & 0x2:
+                c = tuple(x / 255 for x in diffuse[:3]) + (1.0,)
+            a = c[3]
+            if mode & 0x2000:
+                a = alpha if not mode & 0x4000 else a * alpha
+            rgba = [int(max(0, min(1, x)) * 255 + 0.5) for x in (*c[:3], a)]
+            u, t = v['uv']
+            if ti >= 0:
+                u, t = u * rs, t * rt
+            pos, nrm = (v['lpos'], v['lnrm']) if skinned else (v['pos'], v['nrm'])
+            return struct.pack('<8f4B', *pos, u, 1.0 - t, *nrm, *rgba)
+        if not skinned:
+            verts = b''.join(vertex(v, False) for tri in mesh['tris'] for v in tri)
+            batches.append((ti, flags, len(mesh['tris']) * 3, verts, -1, b''))
+            continue
+        # Skinned: one batch per binding. Rigid triangles keep joint-local
+        # vertices; envelope triangles keep model-space vertices plus up to
+        # four (joint, weight) pairs per vertex.
+        groups = {}
         for tri in mesh['tris']:
-            for v in tri:
-                c = v['clr'] if mode & 0x2 else (1.0, 1.0, 1.0, 1.0)
-                if ti < 0 and not mode & 0x2:
-                    c = tuple(x / 255 for x in diffuse[:3]) + (1.0,)
-                a = c[3]
-                if mode & 0x2000:
-                    a = alpha if not mode & 0x4000 else a * alpha
-                rgba = [int(max(0, min(1, x)) * 255 + 0.5) for x in (*c[:3], a)]
-                u, t = v['uv']
-                if ti >= 0:
-                    u, t = u * rs, t * rt
-                verts += struct.pack('<8f4B', *v['pos'], u, 1.0 - t, *v['nrm'], *rgba)
-        batches.append((ti, flags, len(mesh['tris']) * 3, bytes(verts)))
+            kind, b = tri[0]['bind']
+            key = b if kind == 'joint' else 'env'
+            groups.setdefault(key, []).append(tri)
+        for key, tris in groups.items():
+            verts = b''.join(vertex(v, True) for tri in tris for v in tri)
+            weights = b''
+            if key == 'env':
+                for tri in tris:
+                    for v in tri:
+                        kind, b = v['bind']
+                        pairs = list(b) if kind == 'env' else [(b, 1.0)]
+                        pairs = (pairs + [(0, 0.0)] * 4)[:4]
+                        weights += struct.pack('<4B4f', *(j for j, _ in pairs), *(w for _, w in pairs))
+            batches.append((ti, flags, len(tris) * 3, verts, -1 if key == 'env' else key, weights))
     batches.sort(key=lambda b: bool(b[1] & BLEND))
     pts = np.array([v['pos'] for m in meshes for t in m['tris'] for v in t], np.float32)
     # Frame the play area, not the skybox: arenas span about +-8 units, skies +-500.
@@ -129,13 +153,41 @@ def cook(archive, index):
         pts = near if len(near) else pts
     centre = (pts.min(0) + pts.max(0)) / 2
     radius = float(np.linalg.norm(pts - centre, axis=1).max())
-    out = bytearray(b'CRM1' + struct.pack('<II4f', len(textures), len(batches), *centre, radius))
+    out = bytearray((b'CRM2' if skinned else b'CRM1') + struct.pack('<II4f', len(textures), len(batches), *centre, radius))
     for (w, h, fmt, pixels), wrap in textures:
         out += struct.pack('<HHBBBBI', w, h, fmt, WRAP.get(wrap[0], 2), WRAP.get(wrap[1], 2), 0, len(pixels)) + pixels
-    for ti, flags, count, verts in batches:
-        out += struct.pack('<iII', ti, flags, count) + verts
+    if skinned:
+        out += skeleton_block(archive, index, joints)
+    for ti, flags, count, verts, joint, weights in batches:
+        if skinned:
+            out += struct.pack('<iIiI', ti, flags, joint, count) + verts + weights
+        else:
+            out += struct.pack('<iII', ti, flags, count) + verts
     tris = sum(b[2] for b in batches) // 3
     return bytes(out), {'triangles': tris, 'textures': len(textures), 'radius': round(radius, 3)}
+
+def skeleton_block(archive, index, joints):
+    """CRM2 skeleton: joints, rig slots and the robot's 32 dimension floats.
+    Per joint: s16 parent, u8 IK type (1 JOINT1, 2 JOINT2, 3 EFFECTOR), u8 pad,
+    f32 rot[3] (radians), scale[3], trans[3], IK bone length, inverse bind 3x4."""
+    from pose import rig
+    out = struct.pack('<I', len(joints))
+    for j in joints:
+        inv = np.linalg.inv(np.array(j.world))[:3, :].reshape(-1)
+        out += struct.pack('<hBB', j.parent, j.ik, 0) + struct.pack('<10f', *j.rot, *j.scale, *j.trans, j.bone_length)
+        out += struct.pack('<12f', *inv)
+    dims, paths = rig(archive, index)
+    d, _, _ = load_model(archive, index)
+    by_off = {jj.off: jj.index for jj in joints}
+    root = list(d.roots.values())[0]
+    slots = []
+    for path in paths:
+        off = root
+        for c in path:
+            off = d.ptr(off + 8) if c == 2 else d.ptr(off + 12)
+        slots.append(by_off.get(off, -1))
+    out += struct.pack('<19h', *slots) + b'\x00\x00' + struct.pack('<32f', *dims)
+    return out
 
 # (archive, romfs folder, label shown in the viewer), in viewer order.
 CATEGORIES = [('chara', 'robo', 'Robot'), ('gun', 'gun', 'Gun'), ('bom', 'bomb', 'Bomb'),

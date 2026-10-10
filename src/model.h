@@ -17,7 +17,21 @@ typedef struct {
 	u32 flags;
 	u32 first;      // first vertex in the shared VBO
 	u32 count;
+	int joint;      // CRM2: vertices are local to this joint; -1 = envelope (CPU skinned)
+	ModelVertex* envSource;  // envelope batches: model-space source vertices
+	u8 (*envJoint)[4];
+	float (*envWeight)[4];
 } ModelBatch;
+
+typedef struct {
+	s16 parent;
+	u8 ik;          // 1 JOINT1, 2 JOINT2, 3 EFFECTOR
+	float rot[3];   // radians
+	float scale[3];
+	float trans[3];
+	float boneLength;
+	float invBind[3][4];
+} ModelJoint;
 
 typedef struct {
 	C3D_Tex* textures;
@@ -28,6 +42,13 @@ typedef struct {
 	u32 vertexCount;
 	float centre[3];
 	float radius;
+	// CRM2 (skinned robots)
+	bool skinned;
+	ModelJoint* joints;
+	u32 jointCount;
+	bool hasRig;
+	s16 slots[19];        // joint index per rig slot
+	float dims[32];       // the robot's limb dimensions
 } Model;
 
 // Loads a cooked .crm file. Returns false (with a message in err) on failure.

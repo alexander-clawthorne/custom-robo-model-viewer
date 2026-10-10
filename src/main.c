@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "model.h"
+#include "anim.h"
 #include "vshader_shbin.h"
 
 #define CLEAR_COLOR 0x202830FF
@@ -90,8 +91,10 @@ static void sceneInit(void)
 	C3D_CullFace(GPU_CULL_NONE);
 }
 
-static void drawModel(const Model* m, const C3D_Mtx* projection, const C3D_Mtx* modelView)
+// world: per-joint matrices for skinned (CRM2) models, NULL otherwise.
+static void drawModel(const Model* m, const C3D_Mtx* projection, const C3D_Mtx* view, const Mat34* world)
 {
+	const C3D_Mtx* modelView = view;
 	C3D_BufInfo* buf = C3D_GetBufInfo();
 	BufInfo_Init(buf);
 	BufInfo_Add(buf, m->vbo, sizeof(ModelVertex), 4, 0x3210);
@@ -102,6 +105,14 @@ static void drawModel(const Model* m, const C3D_Mtx* projection, const C3D_Mtx* 
 	for (u32 i = 0; i < m->batchCount; i++) {
 		const ModelBatch* b = &m->batches[i];
 		bool lit = b->flags & MODEL_LIT;
+		if (world && b->joint >= 0 && (u32)b->joint < m->jointCount) {
+			C3D_Mtx joint, mv;
+			mat34ToC3D(&world[b->joint], &joint);
+			Mtx_Multiply(&mv, view, &joint);
+			C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, uModelView, &mv);
+		} else {
+			C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, uModelView, modelView);
+		}
 		C3D_FVUnifSet(GPU_VERTEX_SHADER, uLighting, lit ? 1.0f : 0.0f, 0.45f, 0.65f, 0.0f);
 
 		C3D_TexEnv* env = C3D_GetTexEnv(0);
@@ -136,6 +147,14 @@ int main(void)
 	C3D_RenderTargetSetOutput(top, GFX_TOP, GFX_LEFT, DISPLAY_TRANSFER_FLAGS);
 	sceneInit();
 	loadCategories();
+	MotionSet motions;
+	bool haveMotions = motionSetLoad(&motions, "romfs:/motion/robot.mot");
+	int motionIdx = haveMotions ? motionFind(&motions, "sf_normal_walk") : -1;
+	if (haveMotions && motionIdx < 0) motionIdx = 0;
+	float frame = 0.0f;
+	Mat34* world = NULL;
+	bool info = false, reframe = false;
+	float camCentre[3] = { 0 }, camRadius = 1.0f;
 
 	int mode = 0;
 	int index[MAX_CATALOGS] = { 0 };
@@ -157,6 +176,9 @@ int main(void)
 #ifdef AUTOTEST
 		if (++autoFrames == 120) {
 			autoFrames = 0;
+			if (haveMotions && motions.count)  // a different motion on each robot
+				motionIdx = (motionIdx + 23) % motions.count;
+			frame = 0;
 			if (index[mode] + 10 < catalogs[mode].count) index[mode] += 10;
 			else if (mode + 1 < catalogCount) mode++;
 			else break;
@@ -174,6 +196,11 @@ int main(void)
 		}
 		if ((down & KEY_Y) && catalogCount > 1) { mode = (mode + 1) % catalogCount; reload = true; }
 		if (down & KEY_B) spin = !spin;
+		if (haveMotions && loaded && model.hasRig) {
+			// X / SELECT: next / previous motion; one step past the end is the bind pose.
+			if (down & KEY_X) { motionIdx = motionIdx + 1 >= motions.count ? -1 : motionIdx + 1; frame = 0; info = true; }
+			if (down & KEY_SELECT) { motionIdx = motionIdx < 0 ? motions.count - 1 : motionIdx - 1; frame = 0; info = true; }
+		}
 		if (down & KEY_A) { yaw = 0.6f; pitch = 0.25f; zoom = 1.0f; }
 		if (held & KEY_DUP) zoom *= 0.97f;
 		if (held & KEY_DDOWN) zoom *= 1.03f;
@@ -191,6 +218,8 @@ int main(void)
 			reload = false;
 			C3D_FrameSync(); // the GPU may still be reading the old buffers
 			if (loaded) modelFree(&model);
+			free(world);
+			world = NULL;
 			cat = &catalogs[mode];
 			loaded = false;
 			err[0] = 0;
@@ -198,9 +227,17 @@ int main(void)
 				char path[96];
 				snprintf(path, sizeof path, "romfs:/%s/%s", cat->folder, cat->names[index[mode]]);
 				loaded = modelLoad(&model, path, err, sizeof err);
+				if (loaded && model.skinned)
+					world = malloc(model.jointCount * sizeof(Mat34));
 			} else {
 				snprintf(err, sizeof err, "no cooked models in romfs");
 			}
+			info = true;
+		}
+		if (info) {
+			info = false;
+			reframe = true;
+			cat = &catalogs[mode];
 			consoleClear();
 			printf("\x1b[1;1HCustom Robo Viewer\n\n");
 			printf("%s %d / %d  (%s)\n\n", catalogCount ? cat->label : "-", index[mode] + 1, cat->count, cat->count ? cat->names[index[mode]] : "-");
@@ -209,20 +246,66 @@ int main(void)
 					model.textureCount, model.batchCount, model.radius);
 			else
 				printf("Load failed: %s\n", err);
-			printf("\n\nL / R        previous / next\n");
+			if (loaded && model.hasRig && haveMotions)
+				printf("\nMotion %d / %d\n%s\n", motionIdx + 1, motions.count,
+					motionIdx >= 0 ? motions.motions[motionIdx].name : "(bind pose)");
+			printf("\nL / R        previous / next\n");
 			printf("D-pad < >    jump 10\n");
 			printf("Y            next category\n");
 			printf("Circle pad   rotate\n");
 			printf("D-pad ^ v    zoom\n");
 			printf("B            auto-spin   A  reset\n");
+			if (loaded && model.hasRig && haveMotions)
+				printf("X / SELECT   next / previous motion\n");
 			printf("START        exit\n");
 		}
 
+		const Motion* playing = NULL;
+		if (loaded && world) {
+			if (haveMotions && model.hasRig && motionIdx >= 0) {
+				playing = &motions.motions[motionIdx];
+				frame += 1.0f;
+				if (frame > playing->length)
+					frame = 0.0f;
+			}
+			if (reframe && model.jointCount) {
+				// Frame the whole motion, not the T-pose: motions put the hips about
+				// a unit above the bind pose. Sample 8 poses and fit their joints.
+				float lo[3] = { 1e9f, 1e9f, 1e9f }, hi[3] = { -1e9f, -1e9f, -1e9f };
+				for (int k = 0; k < 8; k++) {
+					float f = playing ? playing->length * k / 8.0f : 0.0f;
+					animPose(&model, haveMotions ? &motions : NULL, playing, f, world);
+					for (u32 j = 0; j < model.jointCount; j++)
+						for (int a = 0; a < 3; a++) {
+							float v = world[j].m[a][3];
+							if (v < lo[a]) lo[a] = v;
+							if (v > hi[a]) hi[a] = v;
+						}
+				}
+				float d2 = 0.0f;
+				for (int a = 0; a < 3; a++) {
+					camCentre[a] = (lo[a] + hi[a]) * 0.5f;
+					d2 += (hi[a] - lo[a]) * (hi[a] - lo[a]);
+				}
+				// Joints sit inside the meshes; pad for heads, shoulders and weapons.
+				camRadius = sqrtf(d2) * 0.5f * 1.05f;
+				if (camRadius < model.radius) camRadius = model.radius;
+			}
+			animPose(&model, haveMotions ? &motions : NULL, playing, frame, world);
+		}
+		if (reframe && loaded && !world) {
+			memcpy(camCentre, model.centre, sizeof camCentre);
+			camRadius = model.radius;
+		}
+		reframe = false;
+
 		C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
+		if (loaded && world)
+			animSkin(&model, world);  // after the frame sync: the GPU is done with the VBO
 		C3D_RenderTargetClear(top, C3D_CLEAR_ALL, CLEAR_COLOR, 0);
 		C3D_FrameDrawOn(top);
 		if (loaded) {
-			float r = model.radius > 0.001f ? model.radius : 1.0f;
+			float r = camRadius > 0.001f ? camRadius : 1.0f;
 			float dist = r * 2.6f * zoom;
 			C3D_Mtx projection, view;
 			// Far plane covers arena skyboxes (about 500 units out).
@@ -232,13 +315,15 @@ int main(void)
 			Mtx_Translate(&view, 0.0f, 0.0f, -dist, true);
 			Mtx_RotateX(&view, pitch, true);
 			Mtx_RotateY(&view, yaw, true);
-			Mtx_Translate(&view, -model.centre[0], -model.centre[1], -model.centre[2], true);
-			drawModel(&model, &projection, &view);
+			Mtx_Translate(&view, -camCentre[0], -camCentre[1], -camCentre[2], true);
+			drawModel(&model, &projection, &view, world);
 		}
 		C3D_FrameEnd(0);
 	}
 
 	if (loaded) modelFree(&model);
+	free(world);
+	if (haveMotions) motionSetFree(&motions);
 	shaderProgramFree(&program);
 	DVLB_Free(vshader);
 	C3D_Fini();
