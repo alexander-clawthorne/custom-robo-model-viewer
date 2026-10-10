@@ -5,10 +5,15 @@ Containers:
   HSD    standard archive (.dat, bg_data.BIN even entries): 0x20 header
          (file size, data size, reloc count, root count, ref count), data
          block, relocation table, root/ref tables, string table.
-  Robo   Custom Robo's own wrapper (chara.BIN, weapon_*.BIN): 0x40 header,
-         data block from 0x40. Header words: [2] data offset of the root
-         pointer table, [5] root count, [6] file offset of the relocation
-         table, [7] relocation count. Pointers are data-block offsets.
+  Robo   Custom Robo's own wrapper, data block from 0x40, pointers are
+         data-block offsets. Two header variants:
+         body   (chara.BIN, snr_chara.BIN): [2] data offset of the root
+                pointer table (relocated words -> ModelSets; [5] is not a
+                reliable count: three characters say 3 with one root),
+                [6] FILE offset of the relocation table, [7] its count.
+         parts  (weapon_*.BIN, [5] == -1): [2] data offset of [3] root
+                records of 16 bytes (word 0 -> a JObj), [6] DATA offset of
+                the relocation table, [7] its count.
 Object layouts follow the HSD structures documented by the Melee
 decompilation (doldecomp/melee, src/sysdolphin/baselib) and HSDLib.
 """
@@ -50,12 +55,22 @@ def read_hsd(blob):
     return Data(blob[0x20:at], relocs, roots)
 
 def read_robo(blob):
+    """Returns Data whose roots map 'jobjN' to JObj offsets."""
     h = struct.unpack_from('>16I', blob, 0)
     if h[0] != 0x40:
         raise ValueError('not a Custom Robo model archive')
     data = blob[0x40:]
-    relocs = set(struct.unpack_from(f'>{h[7]}I', blob, h[6]))
-    roots = {f'root{i}': struct.unpack_from('>I', data, h[2] + 4 * i)[0] for i in range(h[5])}
+    if h[5] == 0xFFFFFFFF:
+        relocs = set(struct.unpack_from(f'>{h[7]}I', data, h[6]))
+        roots = {f'jobj{i}': struct.unpack_from('>I', data, h[2] + 16 * i)[0] for i in range(h[3])}
+    else:
+        relocs = set(struct.unpack_from(f'>{h[7]}I', blob, h[6]))
+        roots = {}
+        for i in range(max(1, h[5])):
+            if h[2] + 4 * i not in relocs:
+                continue
+            model_set = struct.unpack_from('>I', data, h[2] + 4 * i)[0]
+            roots[f'jobj{i}'] = struct.unpack_from('>I', data, model_set)[0]
     return Data(data, relocs, roots)
 
 # ---------------------------------------------------------------- math

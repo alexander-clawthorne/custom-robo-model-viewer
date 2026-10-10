@@ -1,9 +1,12 @@
 """Locate model archives on the extracted disc.
 
-  chara N   robot body N (chara.BIN entry N, Custom Robo wrapper)
-  gun/bom/pod/leg N   weapon_<kind>.BIN entry N (same wrapper)
-  bg N      arena N (bg_data.BIN entry 2N, a standard HSD scene_data)
-  title     TITLE_MODEL.dat
+  chara N     robot body N (chara.BIN, Custom Robo wrapper)
+  snrchara N  story character N (scenario_us/snr_chara.BIN, same wrapper)
+  gun/bom/pod/leg N   weapon part N (weapon_<kind>.BIN, parts variant)
+  bg N        arena N (bg_data.BIN entry 2N, standard HSD scene_data)
+  snrobj N    story map object N (scenario_us/snr_obj.BIN, HSD scene_data)
+  legfx N     leg-part effect N (leg_effect.BIN, HSD scene_data)
+  title       TITLE_MODEL.dat
 """
 from pathlib import Path
 import hsd
@@ -23,13 +26,17 @@ def scene_roots(d, scene):
         at += 4
     return roots
 
+ROBO_ARCHIVES = {'chara': 'chara.BIN', 'snrchara': 'scenario_us/snr_chara.BIN',
+                 'gun': 'weapon_gun.BIN', 'bom': 'weapon_bom.BIN', 'pod': 'weapon_pod.BIN', 'leg': 'weapon_leg.BIN'}
+SCENE_ARCHIVES = {'bg': ('bg_data.BIN', 2), 'snrobj': ('scenario_us/snr_obj.BIN', 1), 'legfx': ('leg_effect.BIN', 1)}
+
 def load_model(archive, index=0):
-    if archive == 'chara' or archive in ('gun', 'bom', 'pod', 'leg'):
-        name = 'chara.BIN' if archive == 'chara' else f'weapon_{archive}.BIN'
-        d = hsd.read_robo(entry(name, index))
-        roots = [d.ptr(d.roots['root0'])]  # root0 is a ModelSet: JObj first
-    elif archive == 'bg':
-        d = hsd.read_hsd(entry('bg_data.BIN', index * 2))
+    if archive in ROBO_ARCHIVES:
+        d = hsd.read_robo(entry(ROBO_ARCHIVES[archive], index))
+        roots = list(d.roots.values())
+    elif archive in SCENE_ARCHIVES:
+        name, stride = SCENE_ARCHIVES[archive]
+        d = hsd.read_hsd(entry(name, index * stride))
         roots = scene_roots(d, d.roots['scene_data'])
     elif archive == 'title':
         d = hsd.read_hsd((FILES / 'TITLE_MODEL.dat').read_bytes())
