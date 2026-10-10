@@ -8,10 +8,11 @@
                           lengths (the 32 floats in its model file)
 
 Full notes with instruction addresses: build/motion_RE_notes.md (research,
-not committed). Mirroring, root gating (nodes 23-25) and blending are not
-modelled yet: the viewer plays one motion, unmirrored.
+not committed). The root nodes 23-25 and mirroring follow the game
+(prepare); blending between motions is in src/anim.c only.
 
-    python tools/pose.py chara 0 sf_normal_walk build/preview/walk.png
+    python tools/pose.py chara 0 sf_normal_walk build/preview/walk.png [mirror]
+    python tools/pose.py snrchara 0 m_walk build/preview/story_walk.png
 """
 import math, struct, sys
 from pathlib import Path
@@ -67,16 +68,15 @@ class RawMotion:
         return [eval_track(t, tv, frame) if t else 0.0 for t in self.tracks]
 
 def find_motion(name):
+    """A robot or story motion by its game name."""
     import motion as mo
-    blob = (mo.FILES / 'motion.DBN').read_bytes()
     names = mo.motion_names()
-    for bank, base in enumerate(mo.dbn_banks(blob)):
-        n = struct.unpack_from('>I', blob, base)[0]
-        start = mo.BANK_NAME_START[bank]
-        for i in range(n):
-            nm = names[start + i] if start is not None and names else f'bank{bank}_{i:03d}'
-            if nm == name:
-                return RawMotion(blob, base, i, nm)
+    dbn = (mo.FILES / 'motion.DBN').read_bytes()
+    sources = [(dbn, mo.dbn_banks(dbn)[b]) for b in mo.ROBOT_BANKS] + mo.story_sources()
+    for blob, base in sources:
+        for i, ident in enumerate(mo.bank_ids(blob, base)):
+            if names.get(ident & 0x7FFF) == name:
+                return RawMotion(blob, base, i, name)
     raise KeyError(name)
 
 # ---------------------------------------------------------------- matrices
@@ -119,11 +119,50 @@ def default_skeleton():
             'leg': [(rec[16], rec[17][0], rec[18][0]), (rec[21], rec[22][0], rec[23][0])]}
 
 ROT_NODES = [1, 2, 4, 6, 7, 9, 10, 11, 13, 14, 15, 17, 18, 19, 21, 22]
+POS_NODES = [0, 3, 5, 8, 12, 16, 20]
 
-def solve(ch, D, ds, s=1.0):
+# Mirroring (robot flag 0x40): positions are read with X negated and the
+# left/right targets swapped (0x80054238); rotations are then flipped by
+# 0x80053a20. Per rotation node: its partner and which axes become
+# negated (-1) or 180 - angle (2; the game's constant is 32768 = 180 deg).
+MIRROR_ROT = {1: (1, (1, -1, -1)), 2: (2, (1, 2, 1)), 4: (4, (1, 2, 1)), 14: (14, (-1, 2, -1)),
+              6: (10, (-1, -1, 1)), 7: (11, (-1, -1, 1)), 9: (13, (-1, -1, 1)), 15: (19, (-1, -1, 1)),
+              17: (21, (1, -1, -1)), 18: (22, (1, -1, -1))}
+for _a, (_b, _f) in list(MIRROR_ROT.items()):
+    MIRROR_ROT[_b] = (_a, _f)
+MIRROR_POS = {8: 12, 12: 8, 16: 20, 20: 16}
+
+def prepare(ch, mirror=False):
+    """Channels -> (positions by node, rotations by node, root rotation R24),
+    applying the root nodes 23-25 (0x80056104) and mirroring. Every motion in
+    both motion files has the root-node flag set (bank ID bit 15, which the
+    loader at 0x80074dcc copies into the gate table 0x8032a8c8)."""
+    node = lambda n: list(ch[3 * n:3 * n + 3])
+    pos = {n: node(MIRROR_POS.get(n, n) if mirror else n) for n in POS_NODES + [23, 25]}
+    if mirror:
+        for v in pos.values():
+            v[0] = -v[0]
+    r24 = node(24)
+    R = M(r24)
+    t = R[:3, :3] @ pos[25] + pos[23]
+    pos = {n: R[:3, :3] @ np.array(pos[n]) + t for n in POS_NODES}
+    rot = {n: node(n) for n in ROT_NODES}
+    rot[1] = [a + b for a, b in zip(rot[1], r24)]
+    if mirror:
+        flipped = {}
+        for n in ROT_NODES:
+            src, f = MIRROR_ROT[n]
+            flipped[n] = [180 - v if k == 2 else k * v for v, k in zip(rot[src], f)]
+        rot = flipped
+    return pos, rot, R
+
+def solve(ch, D, ds, s=1.0, mirror=False):
     """20 world matrices (out[0] root, out[r+1] rig slot r) for one frame."""
-    node = lambda n: ch[3 * n:3 * n + 3]
-    Mk = [M(node(n)) for n in ROT_NODES]
+    pos, rot, R24 = prepare(ch, mirror)
+    return solve_prepared(pos, [M(rot[n]) for n in ROT_NODES], R24, D, ds, s)
+
+def solve_prepared(pos, Mk, R24, D, ds, s=1.0):
+    node = lambda n: pos[n]
     root_pos = node(0)
     out = [None] * 20
     out[0] = T(*root_pos) @ Mk[0]
@@ -161,7 +200,7 @@ def solve(ch, D, ds, s=1.0):
         J1 = hips @ Tx(D[14] * s) @ T(d[0] * s, 0, d[1] * s) @ Mk[hip] @ aim(v) @ Rz(A)
         J2 = J1 @ Tx(d[2] * s) @ Rz(B - 180)
         F = J2 @ Tx(d[3] * s)
-        F[:3, :3] = Mk[foot][:3, :3]  # absolute foot orientation (0x80059cc0)
+        F[:3, :3] = (R24 @ Mk[foot])[:3, :3]  # absolute foot orientation (0x80059cc0)
         toe_m = F @ T(0, d[4] * s, d[5] * s) @ Mk[toe]
         out[12 + 4 * side:16 + 4 * side] = [J1, J2, F, toe_m]
     return out
@@ -175,7 +214,7 @@ def rig(archive, index):
     paths = blob[h[8]:].split(b'\xff')[:19]
     return dims, paths
 
-def posed_meshes(archive, index, motion, frame, scale=1.0):
+def posed_meshes(archive, index, motion, frame, scale=1.0, mirror=False):
     d, joints, meshes = load_model(archive, index)
     dims, paths = rig(archive, index)
     by_off = {j.off: j for j in joints}
@@ -186,7 +225,7 @@ def posed_meshes(archive, index, motion, frame, scale=1.0):
         for c in p:
             off = d.ptr(off + 8) if c == 2 else d.ptr(off + 12)
         slot_joint.append(by_off[off].index)
-    out = solve(motion.channels(frame), dims, default_skeleton(), scale)
+    out = solve(motion.channels(frame), dims, default_skeleton(), scale, mirror)
     fixed = {slot_joint[r]: out[r + 1] for r in range(19)}
     world = [None] * len(joints)
     for j in joints:  # depth-first order: parents first
@@ -222,11 +261,12 @@ if __name__ == '__main__':
     from PIL import Image
     from preview import render
     archive, index, name, out = sys.argv[1], int(sys.argv[2]), sys.argv[3], Path(sys.argv[4])
+    mirror = 'mirror' in sys.argv[5:]
     mo = find_motion(name)
     frames = [round(mo.length * k / 6) for k in range(6)]
     tiles = []
     for f in frames:
-        d, posed = posed_meshes(archive, index, mo, f)
+        d, posed = posed_meshes(archive, index, mo, f, mirror=mirror)
         tiles.append(render(d, posed, math.pi / 2, 256, 0.15))
     out.parent.mkdir(parents=True, exist_ok=True)
     Image.fromarray(np.concatenate(tiles, 1)).save(out)

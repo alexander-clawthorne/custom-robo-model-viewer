@@ -76,7 +76,7 @@ def pick_texture(material):
             return t
     return next((t for t in material['textures'] if t['flags'] & 0xF == 0), None)
 
-SKINNED = {'chara'}
+SKINNED = {'chara', 'snrchara'}  # both carry the 19-slot rig and 32 dimensions
 
 def cook(archive, index):
     skinned = archive in SKINNED
