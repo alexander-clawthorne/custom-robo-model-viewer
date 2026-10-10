@@ -217,13 +217,18 @@ class Joint:
     def __init__(self, d, off, world, index):
         self.off, self.flags, self.world, self.index = off, d.u32(off + 4), world, index
 
-def walk_joints(d, root):
-    """All joints of a JObj tree, depth first, with bind-pose world matrices."""
+def walk_joints(d, root, mount_rotation=True):
+    """All joints of a JObj tree, depth first, with bind-pose world matrices.
+    mount_rotation=False drops the top-level joint's rotation: weapon parts
+    store the angle they are mounted at on the robot there (guns: -90 deg X,
+    which lays them on their side when viewed alone)."""
     joints, by_off = [], {}
     def visit(off, parent_off, parent_world):
         while off is not None:
             if ik_type(d, off) == EFFECTOR:
                 world = effector_world(d, off, parent_off, parent_world)
+            elif parent_off is None and not mount_rotation:
+                world = srt(d.vec3(off + 0x20), (0.0, 0.0, 0.0), d.vec3(off + 0x2C))
             else:
                 world = mat_mul(parent_world, local(d, off))
             j = Joint(d, off, world, len(joints))
@@ -282,9 +287,9 @@ def envelopes(d, at):
 # (tools/preview.py); 'model' leaves them untouched, 'joint' applies the joint.
 SINGLE_ENVELOPE = 'model'
 
-def read_meshes(d, root):
+def read_meshes(d, root, mount_rotation=True):
     """Bind-pose triangles per DObj, with its material."""
-    joints, by_off = walk_joints(d, root)
+    joints, by_off = walk_joints(d, root, mount_rotation)
     meshes = []
     for j in joints:
         if j.flags & 0x4030:  # JOBJ_SPLINE / JOBJ_PTCL reuse the DObj slot; 0x10 hidden

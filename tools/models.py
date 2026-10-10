@@ -28,6 +28,9 @@ def scene_roots(d, scene):
 
 ROBO_ARCHIVES = {'chara': 'chara.BIN', 'snrchara': 'scenario_us/snr_chara.BIN',
                  'gun': 'weapon_gun.BIN', 'bom': 'weapon_bom.BIN', 'pod': 'weapon_pod.BIN', 'leg': 'weapon_leg.BIN'}
+# Viewed alone, these parts are shown without the rotation they are mounted
+# at on the robot (see hsd.walk_joints).
+UPRIGHT_ALONE = {'gun'}
 SCENE_ARCHIVES = {'bg': ('bg_data.BIN', 2), 'snrobj': ('scenario_us/snr_obj.BIN', 1), 'legfx': ('leg_effect.BIN', 1)}
 
 def load_model(archive, index=0):
@@ -45,7 +48,7 @@ def load_model(archive, index=0):
         raise ValueError(archive)
     joints, meshes = [], []
     for model, root in enumerate(roots):
-        j, m = hsd.read_meshes(d, root)
+        j, m = hsd.read_meshes(d, root, mount_rotation=archive not in UPRIGHT_ALONE)
         for mesh in m:
             mesh['model'] = model
         joints += j; meshes += m
