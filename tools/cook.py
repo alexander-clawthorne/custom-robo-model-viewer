@@ -137,30 +137,43 @@ def cook(archive, index):
     tris = sum(b[2] for b in batches) // 3
     return bytes(out), {'triangles': tris, 'textures': len(textures), 'radius': round(radius, 3)}
 
+# (archive, romfs folder, label shown in the viewer), in viewer order.
+CATEGORIES = [('chara', 'robo', 'Robot'), ('gun', 'gun', 'Gun'), ('bom', 'bomb', 'Bomb'),
+              ('pod', 'pod', 'Pod'), ('leg', 'leg', 'Legs'), ('bg', 'arena', 'Arena'),
+              ('snrchara', 'snrchara', 'Story character'), ('snrobj', 'snrobj', 'Story object')]
+
+def entry_count(archive):
+    from models import ROBO_ARCHIVES, SCENE_ARCHIVES
+    if archive in ROBO_ARCHIVES:
+        return len(hsd.sfd_entries((FILES / ROBO_ARCHIVES[archive]).read_bytes()))
+    name, stride = SCENE_ARCHIVES[archive]
+    return len(hsd.sfd_entries((FILES / name).read_bytes())) // stride
+
 def main():
     a = argparse.ArgumentParser()
     a.add_argument('--only', nargs='*', help='archive:index pairs, e.g. chara:0 bg:4')
     args = a.parse_args()
+    folders = {arc: folder for arc, folder, _ in CATEGORIES}
     if args.only:
         targets = [(s.split(':')[0], int(s.split(':')[1])) for s in args.only]
     else:
-        robots = len(hsd.sfd_entries((FILES / 'chara.BIN').read_bytes()))
-        arenas = len(hsd.sfd_entries((FILES / 'bg_data.BIN').read_bytes())) // 2
-        targets = [('chara', i) for i in range(robots)] + [('bg', i) for i in range(arenas)]
-    index = {'chara': [], 'bg': []}
+        targets = [(arc, i) for arc, _, _ in CATEGORIES for i in range(entry_count(arc))]
     for archive, i in targets:
         blob, info = cook(archive, i)
-        folder = OUT / ('robo' if archive == 'chara' else 'arena')
+        folder = OUT / folders[archive]
         folder.mkdir(parents=True, exist_ok=True)
         (folder / f'{i:03d}.crm').write_bytes(blob)
-        index[archive].append(i)
         print(f'{archive}:{i} {len(blob) // 1024} KB {info}', flush=True)
-    # index.txt lists the cooked files, so a partial cook (--only) still loads.
-    for folder in ('robo', 'arena'):
+    # index.txt lists the cooked files, so a partial cook (--only) still loads;
+    # categories.txt lists the folders the viewer cycles through with Y.
+    present = []
+    for _, folder, label in CATEGORIES:
         if (OUT / folder).exists():
             names = sorted(p.name for p in (OUT / folder).glob('*.crm'))
             (OUT / folder / 'index.txt').write_bytes(b''.join(n.encode('ascii') + b'\n' for n in names))
-            (OUT / folder / 'count.txt').unlink(missing_ok=True)
+            if names:
+                present.append(f'{folder}|{label}')
+    (OUT / 'categories.txt').write_bytes(''.join(line + '\n' for line in present).encode('ascii'))
 
 if __name__ == '__main__':
     main()

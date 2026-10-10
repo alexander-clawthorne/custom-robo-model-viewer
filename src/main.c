@@ -15,13 +15,15 @@
 	GX_TRANSFER_SCALING(GX_TRANSFER_SCALE_NO))
 
 typedef struct {
-	const char* folder;
-	const char* label;
+	char* folder;
+	char* label;
 	char** names;
 	int count;
 } Catalog;
 
-static Catalog catalogs[2] = { { "robo", "Robot", NULL, 0 }, { "arena", "Arena", NULL, 0 } };
+#define MAX_CATALOGS 16
+static Catalog catalogs[MAX_CATALOGS];
+static int catalogCount;
 
 static DVLB_s* vshader;
 static shaderProgram_s program;
@@ -41,6 +43,29 @@ static void loadCatalog(Catalog* c)
 			continue;
 		c->names = realloc(c->names, (c->count + 1) * sizeof(char*));
 		c->names[c->count++] = strdup(line);
+	}
+	fclose(f);
+}
+
+// romfs:/categories.txt: one "folder|label" line per category (tools/cook.py).
+static void loadCategories(void)
+{
+	FILE* f = fopen("romfs:/categories.txt", "r");
+	if (!f)
+		return;
+	char line[96];
+	while (catalogCount < MAX_CATALOGS && fgets(line, sizeof line, f)) {
+		line[strcspn(line, "\r\n")] = 0;
+		char* bar = strchr(line, '|');
+		if (!bar)
+			continue;
+		*bar = 0;
+		Catalog* c = &catalogs[catalogCount];
+		c->folder = strdup(line);
+		c->label = strdup(bar + 1);
+		loadCatalog(c);
+		if (c->count)
+			catalogCount++;
 	}
 	fclose(f);
 }
@@ -110,11 +135,10 @@ int main(void)
 	C3D_RenderTarget* top = C3D_RenderTargetCreate(240, 400, GPU_RB_RGBA8, GPU_RB_DEPTH24_STENCIL8);
 	C3D_RenderTargetSetOutput(top, GFX_TOP, GFX_LEFT, DISPLAY_TRANSFER_FLAGS);
 	sceneInit();
-	loadCatalog(&catalogs[0]);
-	loadCatalog(&catalogs[1]);
+	loadCategories();
 
-	int mode = catalogs[0].count ? 0 : 1;
-	int index[2] = { 0, 0 };
+	int mode = 0;
+	int index[MAX_CATALOGS] = { 0 };
 	Model model;
 	memset(&model, 0, sizeof model);
 	bool reload = true, loaded = false, spin = true;
@@ -122,8 +146,8 @@ int main(void)
 	char err[96] = "";
 
 #ifdef AUTOTEST
-	// Test build (make AUTOTEST=1): step through every 10th robot, then every
-	// arena, about 2 s each, so an emulator run can be checked without input.
+	// Test build (make AUTOTEST=1): step through every 10th model of every
+	// category, about 2 s each, so an emulator run can be checked without input.
 	int autoFrames = 0;
 	spin = false;
 #endif
@@ -133,9 +157,8 @@ int main(void)
 #ifdef AUTOTEST
 		if (++autoFrames == 120) {
 			autoFrames = 0;
-			if (mode == 0 && index[0] + 10 < catalogs[0].count) index[0] += 10;
-			else if (mode == 0) mode = 1;
-			else if (index[1] + 1 < catalogs[1].count) index[1]++;
+			if (index[mode] + 10 < catalogs[mode].count) index[mode] += 10;
+			else if (mode + 1 < catalogCount) mode++;
 			else break;
 			reload = true;
 		}
@@ -143,13 +166,13 @@ int main(void)
 		if (down & KEY_START)
 			break;
 		Catalog* cat = &catalogs[mode];
-		if (cat->count) {
+		if (catalogCount && cat->count) {
 			if (down & KEY_R) { index[mode] = (index[mode] + 1) % cat->count; reload = true; }
 			if (down & KEY_L) { index[mode] = (index[mode] + cat->count - 1) % cat->count; reload = true; }
 			if (down & KEY_DRIGHT) { index[mode] = (index[mode] + 10) % cat->count; reload = true; }
 			if (down & KEY_DLEFT) { index[mode] = (index[mode] + cat->count - 10 % cat->count) % cat->count; reload = true; }
 		}
-		if ((down & KEY_Y) && catalogs[!mode].count) { mode = !mode; reload = true; }
+		if ((down & KEY_Y) && catalogCount > 1) { mode = (mode + 1) % catalogCount; reload = true; }
 		if (down & KEY_B) spin = !spin;
 		if (down & KEY_A) { yaw = 0.6f; pitch = 0.25f; zoom = 1.0f; }
 		if (held & KEY_DUP) zoom *= 0.97f;
@@ -171,7 +194,7 @@ int main(void)
 			cat = &catalogs[mode];
 			loaded = false;
 			err[0] = 0;
-			if (cat->count) {
+			if (catalogCount && cat->count) {
 				char path[96];
 				snprintf(path, sizeof path, "romfs:/%s/%s", cat->folder, cat->names[index[mode]]);
 				loaded = modelLoad(&model, path, err, sizeof err);
@@ -180,7 +203,7 @@ int main(void)
 			}
 			consoleClear();
 			printf("\x1b[1;1HCustom Robo Viewer\n\n");
-			printf("%s %d / %d  (%s)\n\n", cat->label, index[mode] + 1, cat->count, cat->count ? cat->names[index[mode]] : "-");
+			printf("%s %d / %d  (%s)\n\n", catalogCount ? cat->label : "-", index[mode] + 1, cat->count, cat->count ? cat->names[index[mode]] : "-");
 			if (loaded)
 				printf("%lu triangles, %lu textures\n%lu batches, radius %.2f\n", model.vertexCount / 3,
 					model.textureCount, model.batchCount, model.radius);
@@ -188,7 +211,7 @@ int main(void)
 				printf("Load failed: %s\n", err);
 			printf("\n\nL / R        previous / next\n");
 			printf("D-pad < >    jump 10\n");
-			printf("Y            robots / arenas\n");
+			printf("Y            next category\n");
 			printf("Circle pad   rotate\n");
 			printf("D-pad ^ v    zoom\n");
 			printf("B            auto-spin   A  reset\n");
