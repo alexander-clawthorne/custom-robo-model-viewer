@@ -7,3 +7,4 @@ __pycache__/
 *.elf
 *.smdh
 build3ds/
+build3ds_auto/
