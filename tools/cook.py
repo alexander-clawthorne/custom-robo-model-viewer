@@ -44,13 +44,11 @@ def morton(x, y):
 MORTON = np.array([[morton(x, y) for x in range(8)] for y in range(8)])
 
 def tile(img):
-    """(h, w, c) image, top row first -> PICA 8x8 Morton tiles, bottom row first."""
+    """(h, w, c) image, top row first -> PICA 8x8 Morton tiles in the same
+    order tex3ds writes them (top row first; sampled with t = 1 at the top)."""
     h, w = img.shape[:2]
-    flipped = img[::-1]
     out = np.empty((h // 8, w // 8, 64) + img.shape[2:], img.dtype)
-    tiles = flipped.reshape(h // 8, 8, w // 8, 8, *img.shape[2:]).swapaxes(1, 2)
-    # Tile rows are stored bottom-up already; within a tile, Morton order
-    # counts y upward from the tile's bottom row.
+    tiles = img.reshape(h // 8, 8, w // 8, 8, *img.shape[2:]).swapaxes(1, 2)
     for y in range(8):
         for x in range(8):
             out[:, :, MORTON[y, x]] = tiles[:, :, y, x]
