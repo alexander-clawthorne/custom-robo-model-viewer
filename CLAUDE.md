@@ -39,6 +39,9 @@ docker run --rm -v "C:/Users/Alexander/source/repos/custom-robo-3ds:/proj" -w /p
   418-1094 (motion.DBN bank 2 + snr_motion.BIN, one bank per scenario script).
 - Posing (`tools/pose.py`, ported to `src/anim.c`): root nodes 0x80056104,
   mirror 0x80053a20, two-pass solve 0x8005aee8, blend 0x80052884.
+- Scenario scripts (`scenario/snr_t_01-20.bin`, `snr_f_01-30.bin`, magic `SCR`)
+  are big-endian u16 bytecode; `66, actor, motionID, flag` appears to play a
+  motion (IDs 418+ match story motion names). Not decoded beyond that.
 - Robots and story characters share the 19-slot rig + 32 dimension floats and
   must be cooked as CRM2 (`cook.py SKINNED`).
 
