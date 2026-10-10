@@ -6,6 +6,10 @@
   bg N        arena N (bg_data.BIN entry 2N, standard HSD scene_data)
   atk/gun/bom/podfx N   effect N (*_effect.BIN; each SFD entry holds two
               standard HSD archives, so N is entry*2 + sub)
+  map N       story map N (snr_map.BIN entry N's scene; collision.py reads
+              the collision section of the same entry)
+  rpgf/rpgt N field or town model N (rpg_f/t_models.BIN, flattened over the
+              archive's entries)
   snrobj N    story map object N (scenario_us/snr_obj.BIN, HSD scene_data)
   legfx N     leg-part effect N (leg_effect.BIN, HSD scene_data)
   title       TITLE_MODEL.dat
@@ -52,6 +56,56 @@ def effect_subs(name, index):
     offs = struct.unpack_from(f'>{count + 1}I', blob, 4)
     return [blob[offs[k]:offs[k + 1]] for k in range(count)]
 
+# snr_map.BIN entry header: the collision section (collision.py), the map's
+# own HSD archive, the x and z extents, then an optional trailing container
+# of further HSD scenes. A zero offset means that section is absent.
+def map_sections(index, name='scenario_us/snr_map.BIN'):
+    blob = entry(name, index)
+    coll, scene, tail = (*struct.unpack_from('>2I', blob, 0),
+                         struct.unpack_from('>I', blob, 0x18)[0])
+    bbox = struct.unpack_from('>4f', blob, 8)
+    return {'blob': blob, 'collision': (coll, scene) if coll else None,
+            'scene': (scene, tail or len(blob)), 'bbox': bbox,
+            'extra': tail or None}
+
+def map_extra_scenes(index):
+    """The trailing container's further scenes, if the map has any."""
+    s = map_sections(index)
+    if not s['extra']:
+        return []
+    x = s['blob'][s['extra']:]
+    table = struct.unpack_from('>I', x, 4)[0]
+    out, k = [], 0
+    while struct.unpack_from('>I', x, table + k * 4)[0]:
+        out.append(hsd.read_hsd(x[struct.unpack_from('>I', x, table + k * 4)[0]:]))
+        k += 1
+    return out
+
+# rpg_f/t_models.BIN: u32 count, then count (u32 id, u32 offset) pairs. An id
+# with its high half set is a field or town model of its own; the rest are
+# byte-for-byte copies of snr_chara.BIN entries, bundled per location, and the
+# id IS the story-character index -- so they are already cooked as `snrchara`.
+RPG_ARCHIVES = {'rpgf': 'scenario_us/rpg_f_models.BIN', 'rpgt': 'scenario_us/rpg_t_models.BIN'}
+
+def rpg_parts(name):
+    """(entry, id, blob) for every sub-resource in the archive."""
+    blob = (FILES / name).read_bytes()
+    out = []
+    for i, (o, size) in enumerate(hsd.sfd_entries(blob)):
+        d = blob[o:o + size]
+        count = struct.unpack_from('>I', d, 0)[0]
+        if not count or 4 + 8 * count > size:
+            continue
+        pairs = [struct.unpack_from('>2I', d, 4 + 8 * k) for k in range(count)]
+        for k, (ident, off) in enumerate(pairs):
+            end = pairs[k + 1][1] if k + 1 < count else size
+            out.append((i, ident, d[off:end]))
+    return out
+
+def rpg_models(archive):
+    """Just the field/town models, in archive order."""
+    return [b for _, ident, b in rpg_parts(RPG_ARCHIVES[archive]) if ident >> 16]
+
 def load_model(archive, index=0):
     if archive in ROBO_ARCHIVES:
         d = hsd.read_robo(entry(ROBO_ARCHIVES[archive], index))
@@ -65,6 +119,13 @@ def load_model(archive, index=0):
         per = 1 if name.endswith('.dbn') else 2
         subs = effect_subs(name, index // per if per > 1 else 0)
         d = hsd.read_hsd(subs[index % per if per > 1 else index])
+        roots = scene_roots(d, d.roots['scene_data'])
+    elif archive == 'map':
+        lo, hi = map_sections(index)['scene']
+        d = hsd.read_hsd(entry('scenario_us/snr_map.BIN', index)[lo:hi])
+        roots = scene_roots(d, d.roots['scene_data'])
+    elif archive in RPG_ARCHIVES:
+        d = hsd.read_hsd(rpg_models(archive)[index])
         roots = scene_roots(d, d.roots['scene_data'])
     elif archive == 'title':
         d = hsd.read_hsd((FILES / 'TITLE_MODEL.dat').read_bytes())

@@ -3,6 +3,7 @@
 
     python tools/collision.py            # summarise all 40 arenas
     python tools/collision.py 0 --faces  # list arena 0's faces
+    python tools/collision.py --maps     # the 94 story maps use it too
 
 Arena N is SFD entry 2N (the HSD scene, see models.py) and entry 2N+1,
 which holds collision only -- no HSD header, just offsets from its start:
@@ -100,6 +101,18 @@ def read_collision(blob):
         blocks.append(Block((cx, cy, cz), radius, flags, faces))
     return blocks, (blob[off_tail:] if off_tail else b'')
 
+def story_map(index):
+    """The same format again: snr_map.BIN entry N opens with the offset of a
+    collision section (0 if the map has none) and the offset of the map's own
+    HSD archive, which is where the collision section ends. Unlike an arena,
+    a map puts everything in one block."""
+    from models import map_sections
+    s = map_sections(index)
+    if not s['collision']:
+        return None
+    lo, hi = s['collision']
+    return read_collision(s['blob'][lo:hi])
+
 def arena(index):
     blob = (FILES / 'bg_data.BIN').read_bytes()
     off, size = hsd.sfd_entries(blob)[index * 2 + 1]
@@ -112,7 +125,22 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     ap.add_argument('index', nargs='?', type=int, help='arena 0-39; omit for all')
     ap.add_argument('--faces', action='store_true', help='list every face')
+    ap.add_argument('--maps', action='store_true', help='story maps, not arenas')
     args = ap.parse_args()
+    if args.maps:
+        import hsd as _hsd
+        from models import FILES as _F
+        n = len(_hsd.sfd_entries((_F / 'scenario_us/snr_map.BIN').read_bytes()))
+        for i in ([args.index] if args.index is not None else range(n)):
+            got = story_map(i)
+            if got is None:
+                print(f'map {i:2d}  no collision section')
+                continue
+            blocks, _ = got
+            nf = sum(len(b.faces) for b in blocks)
+            err = max((plane_error(f) for b in blocks for f in b.faces), default=0)
+            print(f'map {i:2d}  {len(blocks):2d} blocks  {nf:5d} faces  plane err {err:.4f}')
+        return
     for i in ([args.index] if args.index is not None else range(ARENAS)):
         blocks, tail = arena(i)
         nf = sum(len(b.faces) for b in blocks)

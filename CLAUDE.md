@@ -64,6 +64,15 @@ docker run --rm -v "C:/Users/Alexander/source/repos/custom-robo-3ds:/proj" -w /p
   (the Melee decomp is right, HSDLib is not). No effect file contains an HSD
   particle object: joint track 40 is a bare trigger with a null object id, so
   what it spawns lives in the DOL, not the file.
+- Story maps (`tools/models.py map_sections`): `snr_map.BIN` entry N starts with
+  the offset of a collision section, the offset of the map's own HSD archive,
+  the x and z extents, and the offset of an optional trailing container of
+  further HSD scenes. A zero offset means that section is absent. The collision
+  is the same format as the arenas', one block per map (`collision.py --maps`).
+- `rpg_f/t_models.BIN`: u32 count, then count (id, offset) pairs. An id with its
+  high half set is a field or town model (138 of them); the other 441 are
+  byte-for-byte copies of `snr_chara.BIN` entries bundled per location, and the
+  id IS the story-character index, so they need no cooking of their own.
 - Robots and story characters share the 19-slot rig + 32 dimension floats and
   must be cooked as CRM2 (`cook.py SKINNED`).
 

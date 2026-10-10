@@ -20,7 +20,7 @@ from PIL import Image
 sys.path.insert(0, str(Path(__file__).parent))
 import gxtex, hsd
 from collision import ARENAS, arena as arena_collision
-from models import EFFECT_ARCHIVES, FILES, effect_subs, load_model
+from models import EFFECT_ARCHIVES, FILES, RPG_ARCHIVES, effect_subs, load_model
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / 'romfs'
@@ -151,7 +151,7 @@ def cook(archive, index):
     batches.sort(key=lambda b: bool(b[1] & BLEND))
     pts = np.array([v['pos'] for m in meshes for t in m['tris'] for v in t], np.float32)
     # Frame the play area, not the skybox: arenas span about +-8 units, skies +-500.
-    if archive == 'bg':
+    if archive in ('bg', 'map'):
         near = pts[np.abs(pts).max(1) < 50]
         pts = near if len(near) else pts
     centre = (pts.min(0) + pts.max(0)) / 2
@@ -231,12 +231,19 @@ CATEGORIES = [('chara', 'robo', 'Robot'), ('gun', 'gun', 'Gun'), ('bom', 'bomb',
               ('collide', 'collide', 'Arena collision'),
               ('atkfx', 'atkfx', 'Attack effect'), ('gunfx', 'gunfx', 'Gun effect'),
               ('bomfx', 'bomfx', 'Bomb effect'), ('podfx', 'podfx', 'Pod effect'),
-              ('legfx', 'legfx', 'Leg effect'), ('efcfx', 'efcfx', 'Shared effect')]
+              ('legfx', 'legfx', 'Leg effect'), ('efcfx', 'efcfx', 'Shared effect'),
+              ('map', 'map', 'Story map'), ('rpgf', 'rpgf', 'Field model'),
+              ('rpgt', 'rpgt', 'Town model')]
 
 def entry_count(archive):
     from models import ROBO_ARCHIVES, SCENE_ARCHIVES
     if archive == 'collide':
         return ARENAS
+    if archive == 'map':
+        return len(hsd.sfd_entries((FILES / 'scenario_us/snr_map.BIN').read_bytes()))
+    if archive in RPG_ARCHIVES:
+        from models import rpg_models
+        return len(rpg_models(archive))
     if archive in EFFECT_ARCHIVES:
         name = EFFECT_ARCHIVES[archive]
         if name.endswith('.dbn'):    # the file is one container
