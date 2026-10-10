@@ -73,6 +73,19 @@ docker run --rm -v "C:/Users/Alexander/source/repos/custom-robo-3ds:/proj" -w /p
   high half set is a field or town model (138 of them); the other 441 are
   byte-for-byte copies of `snr_chara.BIN` entries bundled per location, and the
   id IS the story-character index, so they need no cooking of their own.
+- Text (`tools/bmg.py`): Nintendo BMG, INF1 (u32 offset per message slot, 0 =
+  empty) + DAT1. Shift-JIS. **Escape parameters contain 0x00**, so a message
+  ends at the first NUL that a length-aware walk reaches, not the first NUL.
+  Escapes: `fe 0006` speaker/portrait, `fe 0003` end, `fe 0008` pause,
+  `ff 0002` ruby, `ff 0000` colour, `ff 0001` delay, `01 0000` sound.
+  915 of the 13233 US messages are still Japanese (snr_t_20 almost entirely).
+- Font (`tools/font.py`): `message/font.out` is the effect-style container
+  holding four `FONTbfn1` banks (JUTResFont). GLY1 is one 768x1024 I4 sheet of
+  24x24 cells, 32 across, GameCube-tiled so gxtex reads it; the GLY1 header
+  gives columns before rows. WID1's pair is (left bearing, width) and a glyph
+  is the slice [left, left+width) -- slicing from 0 clips letters. MAP1 type 2
+  is a u16 glyph index per code. `message/font.bmc` is CLT1, 256 RGBA with
+  only six distinct, which is what the `ff 0000` escape picks from.
 - Robots and story characters share the 19-slot rig + 32 dimension floats and
   must be cooked as CRM2 (`cook.py SKINNED`).
 
