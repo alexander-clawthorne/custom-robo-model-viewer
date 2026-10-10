@@ -214,8 +214,12 @@ def _norm(v):
     return tuple(x / n for x in v)
 
 class Joint:
-    def __init__(self, d, off, world, index):
+    def __init__(self, d, off, world, index, parent=-1):
         self.off, self.flags, self.world, self.index = off, d.u32(off + 4), world, index
+        self.parent = parent
+        self.rot, self.scale, self.trans = d.vec3(off + 0x14), d.vec3(off + 0x20), d.vec3(off + 0x2C)
+        self.ik = ik_type(d, off)
+        self.bone_length = bone_length(d, off) if d.ptr(off + 0x3C) is not None else 0.0
 
 def walk_joints(d, root, mount_rotation=True):
     """All joints of a JObj tree, depth first, with bind-pose world matrices.
@@ -231,7 +235,8 @@ def walk_joints(d, root, mount_rotation=True):
                 world = srt(d.vec3(off + 0x20), (0.0, 0.0, 0.0), d.vec3(off + 0x2C))
             else:
                 world = mat_mul(parent_world, local(d, off))
-            j = Joint(d, off, world, len(joints))
+            parent = by_off[parent_off].index if parent_off is not None else -1
+            j = Joint(d, off, world, len(joints), parent)
             joints.append(j); by_off[off] = j
             child = d.ptr(off + 0x08)
             if child is not None:
@@ -310,16 +315,23 @@ def read_meshes(d, root, mount_rotation=True):
                         p = v[GX_VA_POS]
                         p = (p[0], p[1], p[2] if len(p) > 2 else 0.0)
                         n = v.get(GX_VA_NRM, (0.0, 1.0, 0.0))
+                        # Skinning data for animated playback: rigid vertices keep
+                        # their joint-local position; envelope vertices are in model
+                        # space and blend sum(w * world_j * inverse_bind_j).
+                        lp, ln = p, n
                         if envs is not None:
                             env = envs[v.get(GX_VA_PNMTXIDX, 0) // 3]
+                            binding = ('env', tuple((by_off[jo].index, w) for jo, w in env))
                             if len(env) == 1 and SINGLE_ENVELOPE == 'joint':
                                 m = by_off[env[0][0]].world
                                 p, n = xform(m, p), xform(m, n, 0.0)
                         else:
+                            binding = ('joint', bound.index)
                             m = bound.world
                             p, n = xform(m, p), xform(m, n, 0.0)
                         out.append({'pos': p, 'nrm': n, 'uv': v.get(GX_VA_TEX0, (0.0, 0.0)),
-                                    'clr': v.get(GX_VA_CLR0, (1.0, 1.0, 1.0, 1.0))})
+                                    'clr': v.get(GX_VA_CLR0, (1.0, 1.0, 1.0, 1.0)),
+                                    'lpos': lp, 'lnrm': ln, 'bind': binding})
                     tris.append(out)
                 pobj = d.ptr(pobj + 0x04)
             meshes.append({'joint': j.index, 'material': material, 'tris': tris})
