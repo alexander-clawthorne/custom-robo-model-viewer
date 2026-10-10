@@ -59,6 +59,11 @@ docker run --rm -v "C:/Users/Alexander/source/repos/custom-robo-3ds:/proj" -w /p
   HSD. A ModelSet's slots 1-3 are NULL-terminated *arrays* of AnimJoint /
   MatAnimJoint / ShapeAnimJoint roots, one per model, not single pointers.
   Animation is stock HSD AObj/FObj, not Custom Robo's own motion format.
+  Values inside a keyframe stream are little-endian and waits are LSB-first
+  varints, though the file around them is big-endian. Opcode KEY reads a wait
+  (the Melee decomp is right, HSDLib is not). No effect file contains an HSD
+  particle object: joint track 40 is a bare trigger with a null object id, so
+  what it spawns lives in the DOL, not the file.
 - Robots and story characters share the 19-slot rig + 32 dimension floats and
   must be cooked as CRM2 (`cook.py SKINNED`).
 
