@@ -13,12 +13,13 @@
                f32 pos[3], f32 uv[2], f32 normal[3], u8 rgba[4]
 Batches are ordered opaque first, then blended.
 """
-import argparse, json, math, struct, sys
+import argparse, colorsys, json, math, struct, sys
 from pathlib import Path
 import numpy as np
 from PIL import Image
 sys.path.insert(0, str(Path(__file__).parent))
 import gxtex, hsd
+from collision import ARENAS, arena as arena_collision
 from models import FILES, load_model
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -166,6 +167,38 @@ def cook(archive, index):
     tris = sum(b[2] for b in batches) // 3
     return bytes(out), {'triangles': tris, 'textures': len(textures), 'radius': round(radius, 3)}
 
+def cook_collision(index):
+    """The arena's collision shapes as a plain CRM1 model, so the viewer can
+    draw them next to the arena itself (tools/collision.py decodes them).
+    Block 0 is the shell -- four walls and a floor -- so it is drawn
+    translucent; the obstacle blocks are opaque and each gets its own hue."""
+    blocks, _ = arena_collision(index)
+    batches, pts = [], []
+    for bi, block in enumerate(blocks):
+        shell = bi == 0
+        hue = (bi * 0.37) % 1.0
+        rgb = [int(255 * c + 0.5) for c in colorsys.hsv_to_rgb(hue, 0.0 if shell else 0.65, 1.0)]
+        rgba = (*rgb, 64 if shell else 255)
+        verts = b''
+        for face in block.faces:
+            pts += face.verts
+            for k in range(1, len(face.verts) - 1):   # fan: the faces are convex
+                for v in (face.verts[0], face.verts[k], face.verts[k + 1]):
+                    verts += struct.pack('<8f4B', *v, 0.0, 0.0, *face.normal, *rgba)
+        count = len(verts) // struct.calcsize('<8f4B')
+        if count:
+            batches.append((-1, BLEND | NO_ZWRITE if shell else 0, count, verts, -1, b''))
+    batches.sort(key=lambda b: bool(b[1] & BLEND))    # obstacles first, shell over them
+    p = np.array(pts, np.float32)
+    centre = (p.min(0) + p.max(0)) / 2
+    radius = float(np.linalg.norm(p - centre, axis=1).max())
+    out = bytearray(b'CRM1' + struct.pack('<II4f', 0, len(batches), *centre, radius))
+    for ti, flags, count, verts, _, _ in batches:
+        out += struct.pack('<iII', ti, flags, count) + verts
+    faces = sum(len(b.faces) for b in blocks)
+    return bytes(out), {'blocks': len(blocks), 'faces': faces,
+                        'triangles': sum(b[2] for b in batches) // 3, 'radius': round(radius, 3)}
+
 def skeleton_block(archive, index, joints):
     """CRM2 skeleton: joints, rig slots and the robot's 32 dimension floats.
     Per joint: s16 parent, u8 IK type (1 JOINT1, 2 JOINT2, 3 EFFECTOR), u8 pad,
@@ -192,10 +225,13 @@ def skeleton_block(archive, index, joints):
 # (archive, romfs folder, label shown in the viewer), in viewer order.
 CATEGORIES = [('chara', 'robo', 'Robot'), ('gun', 'gun', 'Gun'), ('bom', 'bomb', 'Bomb'),
               ('pod', 'pod', 'Pod'), ('leg', 'leg', 'Legs'), ('bg', 'arena', 'Arena'),
-              ('snrchara', 'snrchara', 'Story character'), ('snrobj', 'snrobj', 'Story object')]
+              ('snrchara', 'snrchara', 'Story character'), ('snrobj', 'snrobj', 'Story object'),
+              ('collide', 'collide', 'Arena collision')]
 
 def entry_count(archive):
     from models import ROBO_ARCHIVES, SCENE_ARCHIVES
+    if archive == 'collide':
+        return ARENAS
     if archive in ROBO_ARCHIVES:
         return len(hsd.sfd_entries((FILES / ROBO_ARCHIVES[archive]).read_bytes()))
     name, stride = SCENE_ARCHIVES[archive]
@@ -211,7 +247,7 @@ def main():
     else:
         targets = [(arc, i) for arc, _, _ in CATEGORIES for i in range(entry_count(arc))]
     for archive, i in targets:
-        blob, info = cook(archive, i)
+        blob, info = cook_collision(i) if archive == 'collide' else cook(archive, i)
         folder = OUT / folders[archive]
         folder.mkdir(parents=True, exist_ok=True)
         (folder / f'{i:03d}.crm').write_bytes(blob)

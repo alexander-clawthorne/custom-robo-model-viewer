@@ -13,6 +13,7 @@ PYTHONUTF8=1 python tools/cook_motion.py  # romfs/motion/robot.mot + story.mot
 docker run --rm -v "C:/Users/Alexander/source/repos/custom-robo-3ds:/proj" -w /proj \
   mkw3ds-build:2026-10-09 make          # -> custom-robo-viewer.3dsx
   ... make AUTOTEST=1 TARGET=custom-robo-viewer-autotest BUILD=build3ds_auto
+  ... make AUTOTEST=1 AUTOCAT=collide AUTOSTEP=5 ...   # one category only
 ```
 - Mount the repo at **/proj**: the build dirs' dependency files hold that path.
 - `make` does not notice romfs changes; delete the `.3dsx` to force a relink.
@@ -22,7 +23,12 @@ docker run --rm -v "C:/Users/Alexander/source/repos/custom-robo-3ds:/proj" -w /p
 - Citra: `C:\Users\Alexander\AppData\Roaming\EmuDeck\Emulators\citra\citra-qt.exe`.
   Its only input profile is an Xbox pad, so test with the AUTOTEST build, which
   steps every 10th model of every category, 2 s each (robot shots ~0-16,
-  story characters ~44-49).
+  story characters ~44-49). A full sweep is now over 72 shots, so when only
+  one category changed build with `AUTOCAT=<romfs folder>` (and `AUTOSTEP=<n>`
+  for the stride) and pass a small `-Shots` -- the run ends when it runs out
+  of models. `make` does not see those two change, so clear the autotest build
+  first, every time:
+  `rm -rf build3ds_auto custom-robo-viewer-autotest.elf custom-robo-viewer-autotest.3dsx`
 - **Never take focus from the user's desktop.** Launch, push Citra to the back,
   capture with PrintWindow flag 2. All done by `tools/citra/autotest.ps1 -Dir build\shots`.
 - Review runs with `tools/contact_sheet.py` (one small image), not single shots.
@@ -42,6 +48,11 @@ docker run --rm -v "C:/Users/Alexander/source/repos/custom-robo-3ds:/proj" -w /p
 - Scenario scripts (`scenario/snr_t_01-20.bin`, `snr_f_01-30.bin`, magic `SCR`)
   are big-endian u16 bytecode; `66, actor, motionID, flag` appears to play a
   motion (IDs 418+ match story motion names). Not decoded beyond that.
+- Arena collision (`tools/collision.py`): bg_data.BIN odd entry 2N+1, blocks of
+  convex faces with precomputed planes, 4-gons everywhere but arena 7 (3-gons);
+  the stride comes from the gap to the next block, not from a field. The game
+  sweeps a sphere per block sphere, then per face. The entry's trailing section
+  is runtime scratch, not data. Cooked to `romfs/collide` as a viewer category.
 - Robots and story characters share the 19-slot rig + 32 dimension floats and
   must be cooked as CRM2 (`cook.py SKINNED`).
 

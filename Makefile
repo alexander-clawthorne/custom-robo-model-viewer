@@ -56,6 +56,16 @@ CFLAGS	:=	-g -Wall -O2 -mword-relocations \
 CFLAGS	+=	$(INCLUDE) -D__3DS__
 ifneq ($(AUTOTEST),)
 CFLAGS	+=	-DAUTOTEST
+# AUTOCAT=<folder> limits the test run to one category (romfs/categories.txt
+# names them: robo, arena, collide, ...); AUTOSTEP changes the 10-model stride.
+# make does not see these change, so delete $(BUILD) and the .elf/.3dsx when
+# switching between them (the CLAUDE.md Test section has the command).
+ifneq ($(AUTOCAT),)
+CFLAGS	+=	-DAUTOTEST_CATEGORY=\"$(AUTOCAT)\"
+endif
+ifneq ($(AUTOSTEP),)
+CFLAGS	+=	-DAUTOTEST_STEP=$(AUTOSTEP)
+endif
 endif
 
 CXXFLAGS	:= $(CFLAGS) -fno-rtti -fno-exceptions -std=gnu++11

@@ -169,6 +169,11 @@ int main(void)
 
 	int mode = 0;
 	int index[MAX_CATALOGS] = { 0 };
+#ifdef AUTOTEST_CATEGORY
+	// make AUTOTEST=1 AUTOCAT=collide: run only that category's models.
+	for (int k = 0; k < catalogCount; k++)
+		if (!strcmp(catalogs[k].folder, AUTOTEST_CATEGORY)) { mode = k; break; }
+#endif
 	Model model;
 	memset(&model, 0, sizeof model);
 	bool reload = true, loaded = false, spin = true;
@@ -177,7 +182,12 @@ int main(void)
 
 #ifdef AUTOTEST
 	// Test build (make AUTOTEST=1): step through every 10th model of every
-	// category, about 2 s each, so an emulator run can be checked without input.
+	// category, about 2 s each, so an emulator run can be checked without
+	// input. AUTOCAT=<folder> runs one category only and AUTOSTEP=<n> changes
+	// the stride, so checking one change does not cost a full sweep.
+#ifndef AUTOTEST_STEP
+#define AUTOTEST_STEP 10
+#endif
 	int autoFrames = 0;
 	spin = false;
 #endif
@@ -191,8 +201,10 @@ int main(void)
 				if (haveSet[k] && sets[k].count)
 					setMotion[k] = (setMotion[k] + 23) % sets[k].count;
 			frame = 0;
-			if (index[mode] + 10 < catalogs[mode].count) index[mode] += 10;
+			if (index[mode] + AUTOTEST_STEP < catalogs[mode].count) index[mode] += AUTOTEST_STEP;
+#ifndef AUTOTEST_CATEGORY
 			else if (mode + 1 < catalogCount) mode++;
+#endif
 			else break;
 			reload = true;
 		}
