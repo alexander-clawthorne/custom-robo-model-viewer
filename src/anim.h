@@ -38,6 +38,12 @@ typedef struct {
 	PoseInput last;
 	bool hasLast;
 	float blend, blendLen;
+	// Arm aim, as the battle's aim stage 0x8003c4f0 does before re-solving
+	// (0x80058ad0): while aiming, hand aimHand (0 = arm 1, the bomb's; 1 =
+	// arm 2, the gun's) reaches for aimAt, given in the model's own space.
+	bool aiming;
+	int aimHand;
+	float aimAt[3];
 } AnimState;
 
 void animBlendStart(AnimState* state, float frames);

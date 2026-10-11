@@ -31,9 +31,14 @@ typedef struct {
 
 typedef struct {
 	char name[24];
-	u8 cooldown, homeAhead, slots, pad;
+	u8 cooldown, homeAhead, slots, id;           // id: the gun's table index
 	GunPattern pattern[2];                       // ground, air
+	float muzzle[3], axis[3];                    // in the part root's frame (tools/muzzle.py)
 } GunStats;
+// Guns the code singles out by index (0x80044174): the Giant Gun aims at the
+// opponent's out[2] instead of along the barrel; it and the Knuckle Gun
+// cannot hit through walls.
+enum { GUN_GIANT = 0x18, GUN_KNUCKLE = 0x1a };
 
 typedef struct {
 	u8 bursts, gap;
@@ -55,6 +60,7 @@ typedef struct {
 	u8 count, flags, pad[2];
 	u16 trigger, pad2;                           // x100
 	BombMode mode[2];                            // ground, air
+	float muzzle[3], axis[3];                    // the throw origin, as for guns
 } BombStats;
 
 enum { POD_NO_EARLY = 1, POD_LOW_TRIGGER = 2, POD_TYPE_R = 4 };
@@ -69,7 +75,7 @@ typedef struct {
 	Blast blast;
 } PodStats;
 
-enum { HIT_GUN = 1, HIT_BOMB = 2, HIT_POD = 3 };
+enum { HIT_GUN = 1, HIT_BOMB = 2, HIT_POD = 3, HIT_TACKLE = 4 };
 
 // The victim's hit record, filled by the other robot's weapons and read
 // (then cleared) by the victim's next frame, as 0x8004b0a0 reads S+0x18a0.
@@ -79,6 +85,8 @@ typedef struct {
 	int damage, down;     // summed over the frame's hits
 	HitParams last;       // the reaction comes from the last hit
 	float dir[3];         // horizontal push direction
+	bool snap;            // a tackle sets the victim just in front of the attacker
+	float snapTo[3];
 } Hit;
 
 // What the weapons need to know about a robot each frame, in world space.
@@ -89,7 +97,8 @@ typedef struct {
 	float aim[3];         // out[1]: what homing bullets steer at
 	float chest[3];       // out[2]: where pods start
 	float hips[3];        // out[11]: bullets are checked for walls from here
-	float gunAt[3], bombAt[3];   // the gun and bomb mounts
+	float gunAt[3], gunDir[3];   // the muzzle and the barrel's +X
+	float bombAt[3], bombDir[3]; // the bomb launcher's
 	float facing[3];      // unit, horizontal
 	float stick[2];       // world x, z, length 0-1: steers the bomb cursor
 	bool airborne;        // S+0x139 == 2
@@ -157,7 +166,7 @@ typedef struct {
 	Pod pods[3];
 	u32 rng;
 	// Counters for the autotest and the bottom screen.
-	int fired, thrown, launched, hits[4], blasts;
+	int fired, thrown, launched, hits[5], blasts;
 } Arsenal;
 
 typedef struct {

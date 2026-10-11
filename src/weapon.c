@@ -113,10 +113,12 @@ void gunInterrupt(Arsenal* a, bool deleteShots)
 static void fireVolley(Arsenal* a, const GunPattern* P, const Fighter* me, const Fighter* foe, const Collision* col)
 {
 	int slots = a->gun->slots < MAX_BULLETS ? a->gun->slots : MAX_BULLETS;
-	// GUESS: the muzzle is the gun's first effect-spawn joint, pointing along
-	// its +X, which the pose solve turns toward the opponent; the port has
-	// neither, so bullets leave the gun mount aimed at the opponent's out[1].
-	float dir[3] = { foe->aim[0] - me->gunAt[0], foe->aim[1] - me->gunAt[1], foe->aim[2] - me->gunAt[2] };
+	// Along the barrel: the muzzle joint's +X, which the gun arm's aim at
+	// the opponent (battle.c) points their way. The Giant Gun aims instead.
+	float dir[3];
+	memcpy(dir, me->gunDir, sizeof dir);
+	if (a->gun->id == GUN_GIANT)
+		for (int k = 0; k < 3; k++) dir[k] = foe->chest[k] - me->gunAt[k];
 	if (norm3(dir) < 1e-6f) memcpy(dir, me->facing, sizeof dir);
 	for (int n = 0; n < P->perVolley; n++) {
 		int i = 0;
@@ -189,6 +191,19 @@ static bool bulletTouches(const Bullet* b, const GunPhase* E, const Fighter* foe
 	return dot3(d, d) < reach * reach;
 }
 
+// 0x80041810: the Giant and Knuckle Guns only hit with a clear line from
+// the victim's centre to the bullet.
+static bool bulletHits(const Arsenal* a, const Bullet* b, const GunPhase* E, const Fighter* foe,
+	const Collision* col)
+{
+	if (!bulletTouches(b, E, foe))
+		return false;
+	if (a->gun->id != GUN_GIANT && a->gun->id != GUN_KNUCKLE)
+		return true;
+	float hit[3], nrm[3];
+	return !collideSegment(col, foe->centre, b->pos, hit, nrm);
+}
+
 static void bulletStep(Arsenal* a, Bullet* b, const Fighter* me, const Fighter* foe, Hit* foeHit,
 	const Collision* col, const ArenaBounds* bounds)
 {
@@ -199,10 +214,13 @@ static void bulletStep(Arsenal* a, Bullet* b, const Fighter* me, const Fighter* 
 		if (b->phase == P->fanPhase && b->frame == 0) {
 			float yaw, pitch;
 			angles(b->dir, &yaw, &pitch);
+			// 0x80042ab8 turns the bullet about its left axis (pitch fan) or
+			// its down axis (yaw fan) with a right-handed rotation: a positive
+			// angle aims it down, or to the shooter's right. The Left Arc's
+			// ground fan is negative and goes left; the four arc and loop guns
+			// flip the sign in their air patterns -- that is in the data.
 			float fan = (P->fanStart - b->index * P->fanStep) * ANGLE16;
-			// GUESS: the sign of the fan (the two arc guns flip it between
-			// their ground and air patterns, so it does matter).
-			if (P->fanAxis) yaw += fan; else pitch += fan;
+			if (P->fanAxis) yaw -= fan; else pitch -= fan;
 			if (P->cone) {
 				yaw += (frand(a) * 2 - 1) * P->cone * ANGLE16;
 				pitch += (frand(a) * 2 - 1) * P->cone * ANGLE16;
@@ -244,7 +262,7 @@ static void bulletStep(Arsenal* a, Bullet* b, const Fighter* me, const Fighter* 
 	}
 	// The hit, once per bullet: a flying bullet stops there, a lingering
 	// trail can still catch the robot.
-	if (!b->hit && foe->hittable && bulletTouches(b, E, foe)) {
+	if (!b->hit && foe->hittable && bulletHits(a, b, E, foe, col)) {
 		b->hit = true;
 		addHit(a, foeHit, HIT_GUN, &E->hit, me->power[0], b->dir);
 		if (b->state == 1) {
@@ -389,9 +407,9 @@ void bombThrow(Arsenal* a, const Fighter* me)
 	if (!a->bomb || !a->aiming)
 		return;
 	const BombMode* m = &a->bomb->mode[me->airborne];
-	// GUESS: forward is the launcher joint's +X flattened; the port aims it
-	// from the mount at the cursor.
-	float f[3] = { a->cursor[0] - me->bombAt[0], 0, a->cursor[2] - me->bombAt[2] };
+	// Forward is the launcher joint's +X, flattened (0x8003f248).
+	float f[3] = { me->bombDir[0], 0, me->bombDir[2] };
+	if (norm3(f) < 1e-6f) { f[0] = a->cursor[0] - me->bombAt[0]; f[1] = 0; f[2] = a->cursor[2] - me->bombAt[2]; }
 	if (norm3(f) < 1e-6f) memcpy(f, me->facing, sizeof f);
 	float s[3] = { f[2], 0, -f[0] };
 	bool used = false;
@@ -559,7 +577,10 @@ void podLaunch(Arsenal* a, const Fighter* me)
 		q->vel[1] = sinf(e) * sp;
 		q->vel[2] = h[2] * cosf(e) * sp;
 		memcpy(q->heading, me->facing, sizeof q->heading);
-		rotY(q->heading, -yaw * DEG);   // GUESS: the sign of both turns
+		// rotY turns toward the left: a positive spread fans left, a
+		// positive yaw starts the homing to the right (0x8003d7e0; the
+		// Double Wave Pod's first pod goes left on both).
+		rotY(q->heading, -yaw * DEG);
 		a->podsOut++;
 		a->launched++;
 	}
@@ -603,7 +624,7 @@ static void podStep(Arsenal* a, Pod* q, const Fighter* me, const Fighter* foe, H
 				q->pause--;
 				q->vel[0] = q->vel[1] = q->vel[2] = 0;
 			} else {
-				float sp = 0.001f * p->speed[q->locked];
+				float sp = 0.001f * p->speed[was];   // the lock as the frame began, as for the gain
 				q->vel[0] = q->heading[0] * sp;
 				q->vel[2] = q->heading[2] * sp;
 			}

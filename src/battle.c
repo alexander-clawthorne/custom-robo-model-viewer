@@ -35,7 +35,14 @@ typedef struct {
 	u8 pad;
 	u8 combat[14];        // body bytes 0x42-0x4f (tools/stats.py)
 	u16 hitRadius;        // x100
+	u8 rec[0x134];        // the whole body record, big-endian, as in the DOL
+	char tackleMotion[32], winMotion[32];   // the body's own clips
 } BodyStats;
+
+// Fields of a body record (B in the notes): bytes, and big-endian u16 / s16.
+static int recU8(const u8* rec, int off) { return rec[off]; }
+static int recU16(const u8* rec, int off) { return rec[off] << 8 | rec[off + 1]; }
+static int recS16(const u8* rec, int off) { return (s16)recU16(rec, off); }
 typedef struct {
 	char name[24];
 	u8 pct[14];
@@ -58,7 +65,7 @@ static bool statsLoad(PartStats* s, const char* path)
 		return false;
 	char magic[4];
 	u32 n[5];
-	bool ok = fread(magic, 4, 1, f) == 1 && !memcmp(magic, "STA2", 4) && fread(n, 4, 5, f) == 5;
+	bool ok = fread(magic, 4, 1, f) == 1 && !memcmp(magic, "STA5", 4) && fread(n, 4, 5, f) == 5;
 	if (ok) {
 		s->bodies = n[0]; s->legs = n[1]; s->guns = n[2]; s->bombs = n[3]; s->pods = n[4];
 		s->body = malloc(n[0] * sizeof(BodyStats));
@@ -157,10 +164,10 @@ static void moveParams(const BodyStats* b, const LegStats* l, MoveParams* p)
 	p->dashSteer = 0.1f * s[14] * DEG;
 	p->dashPitch = b->dashPitch * DEG;
 	p->dashes = b->dashes;
-	// The wall sphere of 0x80061be8 is 1.4 x body +0xa6 / 100, 0.49 for Ray.
-	// GUESS: +0xa6 is not cooked yet, so every body uses Ray's; and the game
-	// centres the sphere between out[2] and out[11], here it sits on the feet.
-	p->radius = 0.49f;
+	// The feet sphere stands in for the game's downward floor query
+	// (0x8006207c); walls are the waist sphere A, sized from the same body
+	// value (see robotWalls). 0.49 for Ray.
+	p->radius = 0.014f * recU16(b->rec, 0xa6);
 }
 
 // Without parts.bin: Ray 01 on the standard leg.
@@ -170,16 +177,21 @@ static const MoveParams fallbackParams = {
 	DASH_AIR, 6, 0.0139f, 10, 0.3f, 2.0f * DEG, 0.0f, 2, 0.49f,
 };
 
-// The weapon and hit states are the game's actions 3, 4, 5 (gun, bomb, pod),
-// 13 (stagger), 14 (knocked down) and 16 (rebirth).
-enum { ST_GROUND, ST_AIR, ST_DASH, ST_LAND, ST_GUN, ST_BOMB, ST_POD, ST_STAGGER, ST_DOWN, ST_REBIRTH };
+// The weapon and hit states are the game's actions 3, 4, 5 (gun, bomb, pod;
+// 9, 10, 11 when fired from a sky dash), 12 (tackle), 13 (stagger), 14
+// (knocked down), 16 (rebirth) and 20 (the winner's pose). Actions 17-19,
+// button 0x80, are the tag battle's change of robot: in a 1-on-1 the input
+// mapper 0x800057b8 turns that button into the target switch instead.
+enum { ST_GROUND, ST_AIR, ST_DASH, ST_LAND, ST_GUN, ST_BOMB, ST_POD, ST_TACKLE, ST_STAGGER, ST_DOWN,
+	ST_REBIRTH, ST_WIN };
 static const char* const stateName[] = { "ground", "air", "air dash", "landing", "gun", "bomb", "pod",
-	"stagger", "down", "rebirth" };
+	"tackle", "stagger", "down", "rebirth", "win" };
 
-enum { MO_STAND, MO_RUN, MO_JUMP, MO_DASH, MO_LAND, MO_DOUBLE, MO_REBIRTH, MO_COUNT };
+// MO_TACKLE and MO_WIN are each body's own clips (BodyStats).
+enum { MO_STAND, MO_RUN, MO_JUMP, MO_DASH, MO_LAND, MO_DOUBLE, MO_REBIRTH, MO_TACKLE, MO_WIN, MO_COUNT };
 static const char* const motionName[MO_COUNT] = {
 	"sf_normal_ta_kamae", "sf_normal_run", "sf_normal_jump", "sf_jump_dash", "sf_landing",
-	"sf_double_jump", "sf_powerup",
+	"sf_double_jump", "sf_powerup", "tackle", "win",
 };
 
 // The bodies face -Z in their own model space: sf_normal_run leans the chest
@@ -215,12 +227,24 @@ typedef struct {
 	// invulnerability frames (S+0xe6), the weapons and the hit record.
 	float hp;
 	int gauge, downMax, invuln, kos;   // windup above doubles as S+0xe2 for the weapons
+	int knockdowns, juggles;   // for the autotest
+	// The body's two spheres (0x80062ff4), as offsets from the feet: A for
+	// walls and the other robot, between out[2] and out[11]; B at out[2].
+	float aOff[3], bOff[3], rA, rB;
+	const u8* rec;        // the body record, NULL without stats
 	const u8* combat;     // body bytes 0x42-0x4f, NULL without stats
 	float hitRadius;
 	float gravityNow;     // the hit's own gravity while staggered or down
 	Arsenal arms;
 	Hit hit;
 	Fighter fig;          // last frame's view of this robot for the weapons
+	bool skyFire;         // a weapon fired from a sky dash: the dash flies on
+	float aimV[3];        // the smoothed aim at the opponent (S+0x158)
+	// The tackle (action 12): stage 0-2 (S+0x186c), heading, landed yet.
+	int stage, tackles, tacklesLanded;
+	float heading[2];
+	bool tackleHit;
+	int moTackle, moWin;  // the body's own clips, index into the motion set
 } Robot;
 
 typedef struct {
@@ -288,6 +312,11 @@ static void robotSpawn(Robot* r, const float* at, float yaw)
 	r->frame = 1e6f;  // falling in: hold the end of the jump
 	r->hp = 1000.0f;
 	r->gauge = r->invuln = r->windup = 0;
+	r->knockdowns = r->juggles = 0;
+	r->skyFire = r->tackleHit = false;
+	r->stage = r->tackles = r->tacklesLanded = 0;
+	r->anim.aiming = false;
+	memset(r->aimV, 0, sizeof r->aimV);
 	memset(&r->hit, 0, sizeof r->hit);
 	arsenalReset(&r->arms, r->arms.gun, r->arms.bomb, r->arms.pod);
 }
@@ -296,19 +325,31 @@ static void robotSpawn(Robot* r, const float* at, float yaw)
 // damage x body 0x42 / 90 (and by the body's 0x47+kind % of that if already
 // down); the down gauge rises by the hit's down value and the robot
 // staggers -- or, at the body's threshold, is knocked down.
-static void robotHurt(Robot* r)
+static void robotHurt(Robot* r, const Robot* foe)
 {
 	Hit* h = &r->hit;
 	if (!h->any)
 		return;
+	// A tackle stage the body's armour mask (+0xd0) covers ignores hits.
+	if (r->state == ST_TACKLE && r->rec && (recU8(r->rec, 0xd0) >> r->stage & 1)) {
+		memset(h, 0, sizeof *h);
+		return;
+	}
 	static const u8 ray[14] = { 100, 100, 100, 0, 150, 57, 30, 50, 50, 30, 100, 100, 100, 100 };
 	const u8* B = r->combat ? r->combat : ray;   // B[k] is body byte 0x42 + k
 	bool wasDown = r->state == ST_DOWN;
+	r->juggles += wasDown;
 	float dmg = h->damage;
 	if (wasDown)
 		dmg *= B[0x47 + h->kind - 0x42] * 0.01f;
-	r->hp -= dmg * B[0] / 90.0f;
+	// HP only falls while the attacker is still standing.
+	if (foe->hp >= 1)
+		r->hp -= dmg * B[0] / 90.0f;
 	if (r->hp < 0) r->hp = 0;
+	if (h->snap)
+		memcpy(r->pos, h->snapTo, sizeof r->pos);
+	r->skyFire = false;
+	r->anim.aiming = false;
 	bool knock = h->down < 0 || r->hp < 1 || wasDown;
 	if (!knock) {
 		r->gauge += h->down;
@@ -319,6 +360,7 @@ static void robotHurt(Robot* r)
 	if (knock) {
 		r->gauge = 0;
 		r->state = ST_DOWN;
+		r->knockdowns++;
 		r->timer = r->hp < 1 ? 255 : B[0x46 - 0x42];
 		speed = q->launch * B[1] / 1000.0f * VEL;
 		angle = q->launchAngle * DEG;
@@ -368,7 +410,83 @@ static void groundVelocity(Robot* r)
 }
 
 // Buttons for one frame of robotStep.
-typedef struct { bool jump, jumpHeld, gun, bomb, bombHeld, pod; } Pad;
+typedef struct { bool jump, jumpHeld, gun, bomb, bombHeld, pod, tackle; } Pad;
+
+// A weapon action is over: back to the sky dash it was fired from, or to
+// moving.
+static void weaponEnd(Robot* r)
+{
+	r->state = r->skyFire ? ST_DASH : r->ground ? ST_GROUND : ST_AIR;
+	r->anim.aiming = false;
+}
+
+// The weapon presses, in the game's order of priority (0x80049924): gun,
+// bomb, pod, then the tackle on the ground only. Each stops the robot dead,
+// unless fired from a sky dash (0x80048050 -> actions 9, 10, 11), which
+// flies on. Nothing is read during an air jump or an air dash.
+static void weaponPress(Robot* r, const Robot* foe, const Collision* col, const Pad* pad)
+{
+	const MoveParams* p = &r->p;
+	bool free = r->state == ST_GROUND || r->state == ST_AIR;
+	bool sky = r->state == ST_DASH && p->dashType == DASH_SKY && r->windup < 1 && r->timer > 0;
+	if (!free && !sky)
+		return;
+	bool air = !r->ground || sky;
+	int next = -1;
+	if (pad->gun && r->arms.gun && !gunBusy(&r->arms)) {
+		next = ST_GUN;
+		r->windup = r->arms.gun->pattern[air].windup;
+	} else if (pad->bomb && bombReady(&r->arms)) {
+		next = ST_BOMB;
+		r->windup = 4;   // the s16 at 0x801c6c10: held at least this long
+	} else if (pad->pod && podReady(&r->arms)) {
+		next = ST_POD;
+		r->windup = 10;  // the s16 at 0x801c6c14
+	} else if (pad->tackle && free && !air && r->rec) {
+		// Action 12, toward the opponent: three stages of the body's own.
+		r->state = ST_TACKLE;
+		r->stage = 0;
+		r->tackleHit = false;
+		r->windup = recS16(r->rec, 0xda);
+		float dx = foe->pos[0] - r->pos[0], dz = foe->pos[2] - r->pos[2], l = sqrtf(dx * dx + dz * dz);
+		r->heading[0] = l > 1e-4f ? dx / l : sinf(r->yaw);
+		r->heading[1] = l > 1e-4f ? dz / l : cosf(r->yaw);
+		r->yaw = atan2f(r->heading[0], r->heading[1]);
+		r->speed = 0;
+		r->hold = 0;
+		r->tackles++;
+		setMotion(r, MO_TACKLE);
+		return;
+	}
+	if (next < 0)
+		return;
+	r->state = next;
+	r->skyFire = sky;
+	r->speed = 0;
+	r->hold = 0;
+	if (!sky) {
+		r->vel[0] = r->vel[2] = 0;
+		if (next != ST_POD) r->vel[1] = 0;
+	}
+	if (next == ST_BOMB)
+		bombAim(&r->arms, &r->fig, &foe->fig, col);
+	if (next == ST_POD)
+		podLaunch(&r->arms, &r->fig);   // on the action's first frame
+}
+
+// The sky dash's own flight, 0x80048050: steer toward the stick by up to
+// s14 / 10 degrees a frame at s13 / 10, pitched up by the body's dash angle.
+// Actions 9-11 run the same block.
+static void skyFly(Robot* r, const float move[2], float mag)
+{
+	const MoveParams* p = &r->p;
+	if (mag > 0.01f)
+		r->yaw = turnToward(r->yaw, atan2f(move[0], move[1]), p->dashSteer);
+	r->vel[0] = sinf(r->yaw) * cosf(p->dashPitch) * p->dashSpeed;
+	r->vel[1] = sinf(p->dashPitch) * p->dashSpeed;
+	r->vel[2] = cosf(r->yaw) * cosf(p->dashPitch) * p->dashSpeed;
+	r->timer--;
+}
 
 // One frame of movement. move is the wanted direction on the ground plane
 // (length 0-1).
@@ -378,32 +496,9 @@ static void robotStep(Robot* r, const Robot* foe, const Collision* col, const fl
 	bool press = pad->jump, held = pad->jumpHeld;
 	if (r->invuln > 0) r->invuln--;
 	if (r->gauge > 0) r->gauge--;
-	robotHurt(r);
-	// The weapon presses (0x80049924), from the ground or a jump: each stops
-	// the robot dead. GUESS: not yet from an air dash (actions 9-11).
-	bool free = r->state == ST_GROUND || r->state == ST_AIR;
-	bool air = !r->ground;
-	if (free && pad->gun && r->arms.gun && !gunBusy(&r->arms)) {
-		r->state = ST_GUN;
-		r->windup = r->arms.gun->pattern[air].windup;
-		r->vel[0] = r->vel[1] = r->vel[2] = 0;
-		r->speed = 0;
-		r->hold = 0;
-	} else if (free && pad->bomb && bombReady(&r->arms)) {
-		r->state = ST_BOMB;
-		r->windup = 4;   // the s16 at 0x801c6c10: held at least this long
-		r->vel[0] = r->vel[1] = r->vel[2] = 0;
-		r->speed = 0;
-		r->hold = 0;
-		bombAim(&r->arms, &r->fig, &foe->fig, col);
-	} else if (free && pad->pod && podReady(&r->arms)) {
-		r->state = ST_POD;
-		r->timer = 10;   // the s16 at 0x801c6c14; the pods leave on the first frame
-		r->vel[0] = r->vel[2] = 0;
-		r->speed = 0;
-		r->hold = 0;
-		podLaunch(&r->arms, &r->fig);
-	}
+	robotHurt(r, foe);
+	weaponPress(r, foe, col, pad);
+	bool air = !r->ground || r->skyFire;
 	float mag = sqrtf(move[0] * move[0] + move[1] * move[1]);
 	if (mag > 1.0f) mag = 1.0f;
 	// The frame the jump is pressed only switches the state: the game's
@@ -490,30 +585,83 @@ static void robotStep(Robot* r, const Robot* foe, const Collision* col, const fl
 	case ST_DASH:
 		break;
 	case ST_GUN:
-		// Action 3: the volleys start on the wind-up's last frame, and the
-		// action lasts until the gun's recovery is over.
+		// Action 3 (9 from a sky dash): the volleys start on the wind-up's
+		// last frame and the action lasts until the gun's recovery is over.
+		// The robot turns to the smoothed aim -- GUESS: the game turns only
+		// the upper body (0x80054238); here the whole robot turns. Not while
+		// sky-dashing, where the stick still steers.
 		if (r->windup == 1 && !gunBusy(&r->arms))
 			gunStart(&r->arms, air);
 		if (r->windup > 0) r->windup--;
+		if (!r->skyFire && (r->aimV[0] != 0 || r->aimV[2] != 0))
+			r->yaw = atan2f(r->aimV[0], r->aimV[2]);
 		if (!gunBusy(&r->arms) && r->windup < 1)
-			r->state = r->ground ? ST_GROUND : ST_AIR;
+			weaponEnd(r);
 		break;
 	case ST_BOMB:
-		// Action 4: aim with the stick while held, throw on release.
+		// Action 4 (10): aim with the stick while held, throw on release.
 		if (r->windup > 0) {
 			r->windup--;
 		} else if (!pad->bombHeld) {
 			bombThrow(&r->arms, &r->fig);
-			r->state = r->ground ? ST_GROUND : ST_AIR;
+			weaponEnd(r);
 		}
-		if (r->arms.aiming) {
+		if (r->arms.aiming && !r->skyFire) {
 			float dx = r->arms.cursor[0] - r->pos[0], dz = r->arms.cursor[2] - r->pos[2];
 			if (dx * dx + dz * dz > 1e-4f) r->yaw = atan2f(dx, dz);
 		}
 		break;
 	case ST_POD:
-		if (--r->timer < 1)
-			r->state = r->ground ? ST_GROUND : ST_AIR;
+		// Action 5 (11): ten frames, the pods out on the first.
+		if (--r->windup < 1)
+			weaponEnd(r);
+		break;
+	case ST_TACKLE: {
+		// Action 12, 0x80046a68. A stage ends when its timer runs out; the
+		// frame it changes moves nothing. After the third, straight back to
+		// moving, with no landing lag.
+		if (r->windup < 1) {
+			if (++r->stage > 2) {
+				r->stage = 0;
+				r->state = r->ground ? ST_GROUND : ST_AIR;
+			} else {
+				r->windup = recS16(r->rec, 0xda + 2 * r->stage);
+			}
+			break;
+		}
+		if (r->stage < 2) {
+			// Homing in stages 0 and 1: snap to the target if it is within
+			// the turn rate (+0xd8, /1000 radians), else turn toward it --
+			// unless it is more than 90 degrees off.
+			float tx = foe->fig.aim[0] - r->fig.hips[0], tz = foe->fig.aim[2] - r->fig.hips[2];
+			float l = sqrtf(tx * tx + tz * tz);
+			if (l > 1e-4f) {
+				tx /= l; tz /= l;
+				float rate = 0.001f * recS16(r->rec, 0xd8);
+				float dot = r->heading[0] * tx + r->heading[1] * tz;
+				float cross = r->heading[1] * tx - r->heading[0] * tz;
+				float ang = atan2f(cross, dot);
+				if (fabsf(ang) <= rate) {
+					r->heading[0] = tx; r->heading[1] = tz;
+				} else if (dot > 0) {
+					float y = atan2f(r->heading[0], r->heading[1]) + copysignf(rate, ang);
+					r->heading[0] = sinf(y); r->heading[1] = cosf(y);
+				}
+			}
+		}
+		float pitch = recS16(r->rec, 0xe6 + 2 * r->stage) * DEG;
+		float sp = 0.1f * recS16(r->rec, 0xe0 + 2 * r->stage) * VEL;
+		r->vel[0] = r->heading[0] * cosf(pitch) * sp;
+		r->vel[1] = sinf(pitch) * sp;
+		r->vel[2] = r->heading[1] * cosf(pitch) * sp;
+		r->yaw = atan2f(r->heading[0], r->heading[1]);
+		r->windup--;
+		break;
+	}
+	case ST_WIN:
+		// Action 20: the winner's pose, standing.
+		r->vel[0] = r->vel[2] = 0;
+		r->speed = 0;
 		break;
 	case ST_STAGGER:
 	case ST_DOWN:
@@ -521,11 +669,9 @@ static void robotStep(Robot* r, const Robot* foe, const Collision* col, const fl
 		if (--r->timer <= 0) {
 			if (r->state == ST_STAGGER) {
 				r->state = r->ground ? ST_GROUND : ST_AIR;
+			} else if (r->hp < 1) {
+				r->timer = 0;   // KO: it stays down
 			} else {
-				if (r->hp < 1) {
-					r->kos++;
-					r->hp = 1000.0f;   // test mode: a KO just starts over
-				}
 				// Action 16: 30 frames of rebirth, then 60 invulnerable.
 				r->state = ST_REBIRTH;
 				r->timer = 30;
@@ -540,7 +686,7 @@ static void robotStep(Robot* r, const Robot* foe, const Collision* col, const fl
 			r->state = r->ground ? ST_GROUND : ST_AIR;
 		break;
 	}
-	bool weaponAir = (r->state == ST_GUN || r->state == ST_BOMB || r->state == ST_POD) && air;
+	bool weaponAir = (r->state == ST_GUN || r->state == ST_BOMB || r->state == ST_POD) && air && !r->skyFire;
 	if (weaponAir) {
 		r->vel[0] = r->vel[2] = 0;
 		r->vel[1] = -0.1f * 40 * VEL;   // a slow sink: the s16 at 0x801c6c0c
@@ -576,9 +722,20 @@ static void robotStep(Robot* r, const Robot* foe, const Collision* col, const fl
 			setMotion(r, MO_JUMP);
 			r->frame = 1e6f;
 		}
+	} else if (r->skyFire) {
+		// A weapon fired from a sky dash: the dash flies on. When it runs out
+		// the gun and bomb carry on as from a jump, the pod action just ends;
+		// the after-dash lag is owed either way.
+		if (r->timer > 0) {
+			skyFly(r, move, mag);
+		} else {
+			r->skyFire = false;
+			r->pendingLag = p->afterDash;
+			if (r->state == ST_POD) weaponEnd(r);
+		}
 	} else if (hurt) {
 		r->vel[1] -= r->gravityNow;
-	} else if (r->state != ST_REBIRTH && !takeoff && !weaponAir) {
+	} else if (r->state != ST_REBIRTH && r->state != ST_TACKLE && !takeoff && !weaponAir) {
 		r->vel[1] -= p->gravity;   // on the ground too: it keeps the floor contact
 	}
 
@@ -608,13 +765,33 @@ static void robotStep(Robot* r, const Robot* foe, const Collision* col, const fl
 		r->pos[1] = c[1] - p->radius;
 		r->pos[2] = c[2];
 	}
+	// Sphere A against the walls, 0x80061be8: the push moves the robot.
+	// Floors are left to the feet sphere, so a push upward is not taken.
+	if (r->rA > 0) {
+		float c[3] = { r->pos[0] + r->aOff[0], r->pos[1] + r->aOff[1], r->pos[2] + r->aOff[2] };
+		float before[3] = { c[0], c[1], c[2] };
+		bool g;
+		if (collideSphere(col, c, r->rA, &g, NULL)) {
+			float push[3] = { c[0] - before[0], fminf(c[1] - before[1], 0.0f), c[2] - before[2] };
+			float len = sqrtf(push[0] * push[0] + push[1] * push[1] + push[2] * push[2]);
+			if (len > 1e-6f) {
+				for (int a = 0; a < 3; a++) r->pos[a] += push[a];
+				float into = (r->vel[0] * push[0] + r->vel[1] * push[1] + r->vel[2] * push[2]) / len;
+				if (into < 0)
+					for (int a = 0; a < 3; a++) r->vel[a] -= into * push[a] / len;
+			}
+		}
+	}
 	bool wasAir = r->state == ST_AIR || r->state == ST_DASH;
 	if (wasAir && r->pos[1] > r->peakY)
 		r->peakY = r->pos[1];
 	if (hurt && ground) {
-		// GUESS: a hit robot loses its sideways speed on the floor.
-		r->vel[0] *= 0.8f;
-		r->vel[2] *= 0.8f;
+		// On the floor a hit robot skids to a stop by the ground rule of
+		// 0x8004b0a0: actions 13 and 14 hold the run speed at 0 (S+0x128,
+		// 0x80045fec), so it slides 0.002 a frame toward rest. Assumed to
+		// apply to these actions as to moving: not traced separately.
+		r->speed = 0;
+		groundVelocity(r);
 	}
 	if (r->state > ST_LAND) {
 		// the weapon and hit states keep their own state on landing
@@ -660,7 +837,7 @@ static void robotStep(Robot* r, const Robot* foe, const Collision* col, const fl
 	if (r->state == ST_GROUND)
 		setMotion(r, r->speed > p->runSpeed * 0.1f ? MO_RUN : MO_STAND);
 	else if (r->state == ST_GUN || r->state == ST_BOMB || r->state == ST_POD)
-		setMotion(r, r->ground ? MO_STAND : MO_JUMP);
+		setMotion(r, r->skyFire ? MO_DASH : r->ground ? MO_STAND : MO_JUMP);
 }
 
 // The weapons' view of a robot: rig-slot positions in the world. Slot r is
@@ -677,6 +854,33 @@ static void slotWorld(const Robot* r, int slot, float height, float* out)
 	out[2] = r->pos[2] - s * local[0] + c * local[2];
 }
 
+// A point and a direction given in a rig slot's frame scaled by
+// PART_SCALE -- a part's own frame, where the muzzles are cooked -- to the
+// world: world = placement x slot matrix x scale(0.1) x p.
+static bool slotPart(const Robot* r, int slot, const float* p, const float* axis, float* at, float* dir)
+{
+	s16 j = r->body.hasRig ? r->body.slots[slot] : -1;
+	if (j < 0 || (u32)j >= r->body.jointCount || !r->world)
+		return false;
+	const Mat34* m = &r->world[j];
+	float lp[3], ld[3];
+	for (int k = 0; k < 3; k++) {
+		lp[k] = m->m[k][3] + PART_SCALE * (m->m[k][0] * p[0] + m->m[k][1] * p[1] + m->m[k][2] * p[2]);
+		ld[k] = m->m[k][0] * axis[0] + m->m[k][1] * axis[1] + m->m[k][2] * axis[2];
+	}
+	float a = r->yaw + MODEL_YAW, c = cosf(a), s = sinf(a);
+	at[0] = r->pos[0] + c * lp[0] + s * lp[2];
+	at[1] = r->pos[1] + lp[1];
+	at[2] = r->pos[2] - s * lp[0] + c * lp[2];
+	dir[0] = c * ld[0] + s * ld[2];
+	dir[1] = ld[1];
+	dir[2] = -s * ld[0] + c * ld[2];
+	float l = sqrtf(dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]);
+	if (l > 1e-6f)
+		for (int k = 0; k < 3; k++) dir[k] /= l;
+	return true;
+}
+
 static void robotFighter(Robot* r, const float stick[2])
 {
 	Fighter* f = &r->fig;
@@ -684,9 +888,31 @@ static void robotFighter(Robot* r, const float stick[2])
 	slotWorld(r, 0, 0.8f, f->aim);
 	slotWorld(r, 1, 1.0f, f->chest);
 	slotWorld(r, 10, 0.6f, f->hips);
-	slotWorld(r, 8, 0.9f, f->gunAt);
-	slotWorld(r, 4, 0.9f, f->bombAt);
-	for (int k = 0; k < 3; k++) f->centre[k] = 0.5f * (f->chest[k] + f->hips[k]);
+	// The gun's muzzle on rig slot 8 (out[9]), the bomb launcher's on slot 4
+	// (out[5]): tools/muzzle.py.
+	static const float zero[3] = { 0, 0, 0 }, xAxis[3] = { 1, 0, 0 };
+	const GunStats* g = r->arms.gun;
+	const BombStats* b = r->arms.bomb;
+	if (!slotPart(r, 8, g ? g->muzzle : zero, g ? g->axis : xAxis, f->gunAt, f->gunDir))
+		slotWorld(r, 8, 0.9f, f->gunAt);
+	if (!slotPart(r, 4, b ? b->muzzle : zero, b ? b->axis : xAxis, f->bombAt, f->bombDir))
+		slotWorld(r, 4, 0.9f, f->bombAt);
+	// The hit centre, 0x8003ba78: midway between out[2] and out[11], pulled a
+	// third of the way to the feet when body +0xae is set.
+	bool pull = r->rec && recU16(r->rec, 0xae);
+	for (int k = 0; k < 3; k++) {
+		f->centre[k] = 0.5f * (f->chest[k] + f->hips[k]);
+		if (pull) f->centre[k] = f->pos[k] + (f->centre[k] - f->pos[k]) * (2.0f / 3.0f);
+	}
+	// Spheres A and B for walls and the other robot.
+	float t = r->rec ? 0.01f * recU16(r->rec, 0xa8) : 0.5f;
+	float a6 = r->rec ? 0.01f * recU16(r->rec, 0xa6) : 0.35f;
+	for (int k = 0; k < 3; k++) {
+		r->aOff[k] = f->chest[k] * (1 - t) + f->hips[k] * t - r->pos[k];
+		r->bOff[k] = f->chest[k] - r->pos[k];
+	}
+	r->rA = 1.4f * a6;
+	r->rB = a6;
 	f->radius = r->hitRadius;
 	f->facing[0] = sinf(r->yaw);
 	f->facing[1] = 0;
@@ -702,7 +928,8 @@ static void robotFighter(Robot* r, const float stick[2])
 
 static void robotAnimate(Robot* r, const Motions* mo)
 {
-	int id = r->motion >= 0 ? mo->id[r->motion] : -1;
+	int id = r->motion == MO_TACKLE ? r->moTackle : r->motion == MO_WIN ? r->moWin
+		: r->motion >= 0 ? mo->id[r->motion] : -1;
 	const Motion* m = id >= 0 ? &mo->set->motions[id] : NULL;
 	if (m) {
 		bool loop = r->motion == MO_STAND || r->motion == MO_RUN;
@@ -716,6 +943,109 @@ static void robotAnimate(Robot* r, const Motions* mo)
 			r->frame = loop ? fmodf(r->frame, m->length) : m->length;
 	}
 	animPose(&r->body, mo->set, m, r->frame, false, &r->anim, r->world);
+}
+
+// The arm aim of a gun or bomb action, before the pose (0x8003c4f0, then the
+// re-solve 0x80058ad0): the gun hand reaches for the opponent's root out[0]
+// -- the same point as its out[11] -- and the bomb hand for the cursor. The
+// aim direction V (S+0x158) eases halfway to the opponent's out[1] each
+// frame. GUESS, not ported: the torso lean, pitch clamped to -50..+20 deg.
+static void robotAim(Robot* r, const Robot* foe)
+{
+	bool gun = r->state == ST_GUN, bomb = r->state == ST_BOMB && r->arms.aiming;
+	if (gun) {
+		float d[3] = { foe->fig.aim[0] - r->fig.aim[0], foe->fig.aim[1] - r->fig.aim[1], foe->fig.aim[2] - r->fig.aim[2] };
+		float l = sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+		if (l > 1e-4f)
+			for (int k = 0; k < 3; k++) r->aimV[k] = 0.5f * r->aimV[k] + 0.5f * d[k] / l;
+	}
+	r->anim.aiming = gun || bomb;
+	if (!r->anim.aiming)
+		return;
+	const float* at = gun ? foe->fig.hips : r->arms.cursor;
+	float d[3] = { at[0] - r->pos[0], at[1] - r->pos[1], at[2] - r->pos[2] };
+	float a = r->yaw + MODEL_YAW, c = cosf(a), s = sinf(a);
+	r->anim.aimHand = gun ? 1 : 0;
+	r->anim.aimAt[0] = c * d[0] - s * d[2];
+	r->anim.aimAt[1] = d[1];
+	r->anim.aimAt[2] = s * d[0] + c * d[2];
+}
+
+// The tackle's hit, 0x800450ec: in stage 1 only, once per tackle, a sphere
+// ahead of the hit centre (+0xec radius, +0xee ahead, +0xf0 up, all /100)
+// against the victim's hit sphere. It always knocks down (down -1) and
+// sets the victim just in front of the attacker.
+static void robotTackleHit(Robot* me, Robot* foe)
+{
+	if (me->state != ST_TACKLE || me->stage != 1 || me->tackleHit || !me->rec || !foe->fig.hittable)
+		return;
+	if (recU8(me->rec, 0xd0) & 8)
+		return;
+	const u8* B = me->rec;
+	float c[3] = { me->fig.centre[0] + 0.01f * recS16(B, 0xee) * me->heading[0],
+		me->fig.centre[1] + 0.01f * recS16(B, 0xf0), me->fig.centre[2] + 0.01f * recS16(B, 0xee) * me->heading[1] };
+	float reach = 0.01f * recS16(B, 0xec) + foe->fig.radius;
+	float d[3] = { foe->fig.centre[0] - c[0], foe->fig.centre[1] - c[1], foe->fig.centre[2] - c[2] };
+	if (d[0] * d[0] + d[1] * d[1] + d[2] * d[2] >= reach * reach)
+		return;
+	me->tackleHit = true;
+	me->tacklesLanded++;
+	Hit* h = &foe->hit;
+	h->any = true;
+	h->kind = HIT_TACKLE;
+	h->damage += recS16(B, 0xd2);
+	h->down = -1;
+	memset(&h->last, 0, sizeof h->last);
+	h->last.damage = recS16(B, 0xd2);
+	h->last.down = -1;
+	h->last.launch = recS16(B, 0xd4);
+	h->last.launchAngle = recS16(B, 0xd6);
+	h->last.launchGravity = 100;
+	h->dir[0] = me->heading[0];
+	h->dir[1] = 0;
+	h->dir[2] = me->heading[1];
+	h->snap = true;
+	h->snapTo[0] = me->pos[0] + 0.3f * me->heading[0];
+	h->snapTo[1] = me->pos[1];
+	h->snapTo[2] = me->pos[2] + 0.3f * me->heading[1];
+}
+
+// One robot's push against the other, 0x80063da4 / 0x800633bc: sphere A
+// against the other's A moves both apart by half the overlap each, along
+// the line between the centres; else A against the other's B moves only
+// this one. Each robot runs it in its own turn.
+static void robotPush(Robot* me, Robot* other)
+{
+	if (me->rA <= 0 || other->rA <= 0)
+		return;
+	// The tackle sets S+0x1d8 0x40000 every frame (0x80046a68) and the push
+	// skips a pair where either robot has it: that is how a tackle connects.
+	if (me->state == ST_TACKLE || other->state == ST_TACKLE)
+		return;
+	float a[3], oa[3], ob[3];
+	for (int k = 0; k < 3; k++) {
+		a[k] = me->pos[k] + me->aOff[k];
+		oa[k] = other->pos[k] + other->aOff[k];
+		ob[k] = other->pos[k] + other->bOff[k];
+	}
+	float reach = me->rA + other->rA;
+	bool both = true;
+	float d[3] = { a[0] - oa[0], a[1] - oa[1], a[2] - oa[2] };
+	float dist = sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+	if (dist > reach) {
+		reach = me->rA + other->rB;
+		both = false;
+		for (int k = 0; k < 3; k++) d[k] = a[k] - ob[k];
+		dist = sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+		if (dist > reach)
+			return;
+	}
+	if (dist < 1e-5f) { d[0] = 1; d[1] = d[2] = 0; dist = 1; }
+	float half = 0.5f * (reach - dist);
+	for (int k = 0; k < 3; k++) {
+		me->pos[k] += d[k] / dist * half;
+		if (both) other->pos[k] -= d[k] / dist * half;
+	}
 }
 
 static void robotDraw(Robot* r, const Model* parts, const bool* havePart,
@@ -740,6 +1070,7 @@ static void robotDraw(Robot* r, const Model* parts, const bool* havePart,
 // (0x801bcac8); its low point is 0.25 above the feet and its high point
 // 1.15 x height / 1.31. The camera stays 5.7 (r13-0x7f90) behind the
 // nearest robot.
+#define ROUND_FRAMES 7200
 #define CAM_FOVY 30.0f
 #define CAM_PITCH (35.0f * DEG)
 #define CAM_NEAREST 5.7f
@@ -804,6 +1135,7 @@ static void battleCamera(const Robot* robots, int count, float eye[3], float at[
 // (x right, y forward); keys are pressed on the first frame of a cue and
 // held to its end.
 typedef struct { int from, to; float x, y; u32 keys; } Cue;
+#define TOWARD_FOE 9.0f   // x of a cue that runs straight at the other robot
 static const Cue script[] = {
 	// The run is long: the slowest bodies need 53 frames to top speed, and a
 	// robot that spawns on an obstacle loses some to the landing off it.
@@ -816,13 +1148,22 @@ static const Cue script[] = {
 	// Dashes last: a sky dash flies for up to 240 frames and cannot be cut.
 	{ 580, 610,  0.0f,  0.0f, KEY_A },    // jump for the air dashes (pressed below)
 	{ 610, 700,  1.0f,  0.0f, 0 },        // ...dashing right
-	// Then every weapon once, standing: gun, a bomb aimed for half a second
-	// with the stick pushed forward, and the pods.
+	{ 700, 701,  1.0f,  0.0f, KEY_B },    // the gun from the dash (a sky dash flies on)
+	// Then every weapon, standing: the gun, a bomb, the pods, a tackle.
+	// Two volleys, so the other robot's down gauge tips over: the knockdown,
+	// rebirth and invulnerability that follow are timed and judged.
 	{ 960, 961,  0.0f,  0.0f, KEY_B },
-	{ 1060, 1090, 0.0f, 0.5f, KEY_R },
-	{ 1150, 1151, 0.0f, 0.0f, KEY_L },
+	{ 1045, 1046, 0.0f, 0.0f, KEY_B },
+	// The bomb flies over a second, so it is thrown as the other robot's
+	// rebirth ends and lands once it can be hit again.
+	{ 1230, 1260, 0.0f, 0.0f, KEY_R },   // held half a second, cursor left where it starts
+	{ 1300, 1301, 0.0f, 0.0f, KEY_L },
+	{ 1330, 1500, TOWARD_FOE, 0.0f, 0 }, // run up to the other robot...
+	{ 1500, 1501, 0.0f, 0.0f, KEY_X },    // ...and tackle it, pressed again in
+	{ 1510, 1511, 0.0f, 0.0f, KEY_X },    // case the first press fell in a
+	{ 1520, 1521, 0.0f, 0.0f, KEY_X },    // landing lag (ignored mid-tackle)
 };
-#define SCRIPT_FRAMES 1320
+#define SCRIPT_FRAMES 1860
 // A every 4 frames while dashing, so each dash starts as soon as the last ends.
 #define DASH_FROM 612
 #define DASH_TO 700
@@ -847,10 +1188,13 @@ static void scripted(int t, float* x, float* y, u32* down, u32* held)
 typedef struct {
 	float topSpeed, full, hop, turn, aim, landSpeed;
 	int fullHeld, lag, dashes, skid;
+	int curDown, downRun, curReb, rebRun, curInv, invRun, juggleMark;
+	bool skyShot, tackleRan;
+	int tackleFrames;
 	bool done, pass;
-	char line[8][40];
+	char line[10][48];
 } AutoCheck;
-#define CHECK_LINES 8
+#define CHECK_LINES 10
 
 static void autoSample(AutoCheck* c, const Robot* r, const Robot* foe, int t, float* yawMark)
 {
@@ -874,6 +1218,28 @@ static void autoSample(AutoCheck* c, const Robot* r, const Robot* foe, int t, fl
 		c->turn = fabsf(wrapAngle(r->yaw - *yawMark)) / DEG;
 		c->aim = fabsf(wrapAngle(r->yaw - r->wantYaw)) / DEG;
 	}
+	if (r->state == ST_GUN && r->skyFire) c->skyShot = true;
+	if (r->state == ST_TACKLE) { c->tackleRan = true; c->tackleFrames++; }
+	// The other robot's knockdown timeline, as states run: down, rebirth,
+	// then invulnerable. A hit while down restarts the down time, so a
+	// juggled run is not judged against the body's figure.
+	if (foe->state == ST_DOWN) {
+		if (!c->curDown) c->juggleMark = foe->juggles;
+		c->curDown++;
+	} else if (c->curDown) {
+		c->downRun = foe->juggles == c->juggleMark ? c->curDown : -1;
+		c->curDown = 0;
+	}
+	if (foe->state == ST_REBIRTH) {
+		c->curReb++;
+	} else if (c->curReb) {
+		c->rebRun = c->curReb;
+		c->curReb = 0;
+		c->curInv = 1;
+	} else if (c->curInv) {
+		if (foe->invuln > 0) c->curInv++;
+		else { c->invRun = c->curInv; c->curInv = 0; }
+	}
 	if (t != SCRIPT_FRAMES - 1)
 		return;
 	const MoveParams* p = &r->p;
@@ -888,20 +1254,37 @@ static void autoSample(AutoCheck* c, const Robot* r, const Robot* foe, int t, fl
 	// target (0 during the lag, the stick is neutral after it).
 	int skidWant = c->landSpeed > SLIP_THRESHOLD ? (int)ceilf((c->landSpeed - SLIP_THRESHOLD) / SLIDE_STEP) : 0;
 	bool skid = abs(c->skid - skidWant) <= 1;
-	snprintf(c->line[0], 40, "run  %s top %.3f/%.3f", run ? "ok  " : "FAIL", c->topSpeed, p->runSpeed);
-	snprintf(c->line[1], 40, "jump %s %.2f of %.2f, %df", full ? "ok  " : "FAIL", c->full, want, c->fullHeld);
-	snprintf(c->line[2], 40, "hop  %s %.2f", hop ? "ok  " : "FAIL", c->hop);
-	snprintf(c->line[3], 40, "dash %s %d of %d", dash ? "ok  " : "FAIL", c->dashes, p->dashes);
-	snprintf(c->line[4], 40, "turn %s %.0f deg, %.0f off stick", turn ? "ok  " : "FAIL", c->turn, c->aim);
-	snprintf(c->line[5], 40, "land %s lag %d", land ? "ok  " : "FAIL", c->lag);
-	snprintf(c->line[6], 40, "skid %s %d of %d frames", skid ? "ok  " : "FAIL", c->skid, skidWant);
+	snprintf(c->line[0], 48, "run  %s top %.3f/%.3f", run ? "ok  " : "FAIL", c->topSpeed, p->runSpeed);
+	snprintf(c->line[1], 48, "jump %s %.2f of %.2f, %df", full ? "ok  " : "FAIL", c->full, want, c->fullHeld);
+	snprintf(c->line[2], 48, "hop  %s %.2f", hop ? "ok  " : "FAIL", c->hop);
+	snprintf(c->line[3], 48, "dash %s %d of %d", dash ? "ok  " : "FAIL", c->dashes, p->dashes);
+	snprintf(c->line[4], 48, "turn %s %.0f deg, %.0f off stick", turn ? "ok  " : "FAIL", c->turn, c->aim);
+	snprintf(c->line[5], 48, "land %s lag %d", land ? "ok  " : "FAIL", c->lag);
+	snprintf(c->line[6], 48, "skid %s %d of %d frames", skid ? "ok  " : "FAIL", c->skid, skidWant);
 	// Every weapon fired at least once. Hits are reported, not judged: the
 	// other robot stands wherever it landed.
 	const Arsenal* a = &r->arms;
 	bool arms = a->fired > 0 && a->thrown > 0 && a->launched > 0;
-	snprintf(c->line[7], 40, "arms %s g%d b%d p%d hit %d/%d/%d hp %.0f", arms ? "ok  " : "FAIL", a->fired, a->thrown,
-		a->launched, a->hits[HIT_GUN], a->hits[HIT_BOMB], a->hits[HIT_POD], foe->hp);
-	c->pass = run && full && hop && dash && turn && land && skid && arms;
+	snprintf(c->line[7], 48, "arms %s g%d b%d p%d x%d hit %d/%d/%d hp %.0f", arms ? "ok  " : "FAIL", a->fired,
+		a->thrown, a->launched, a->blasts, a->hits[HIT_GUN], a->hits[HIT_BOMB], a->hits[HIT_POD], foe->hp);
+	int downWant = foe->combat ? foe->combat[0x46 - 0x42] : 150;
+	// Judged only when a knockdown happened: scenery can shield the other
+	// robot from every shot in some arenas.
+	bool knocked = foe->knockdowns > 0;
+	bool timeline = !knocked || ((c->downRun < 0 || abs(c->downRun - downWant) <= 1)
+		&& c->rebRun == 30 && c->invRun >= 59 && c->invRun <= 61);
+	if (knocked)
+		snprintf(c->line[8], 48, "down %s x%d %d/%d reb %d inv %d", timeline ? "ok  " : "FAIL", foe->knockdowns,
+			c->downRun, downWant, c->rebRun, c->invRun);
+	else
+		snprintf(c->line[8], 48, "down --   no knockdown");
+	// The tackle runs its three stages: their frames plus one per change.
+	int tackleWant = r->rec ? recS16(r->rec, 0xda) + recS16(r->rec, 0xdc) + recS16(r->rec, 0xde) + 3 : 0;
+	bool sky = p->dashType != DASH_SKY || c->skyShot;
+	bool tackle = c->tackleRan && abs(c->tackleFrames - tackleWant) <= 1;
+	snprintf(c->line[9], 48, "tkl  %s %d of %d f, hit %d, sky %s", tackle && sky ? "ok  " : "FAIL", c->tackleFrames,
+		tackleWant, r->tacklesLanded, p->dashType != DASH_SKY ? "n/a" : c->skyShot ? "yes" : "no");
+	c->pass = run && full && hop && dash && turn && land && skid && arms && timeline && tackle && sky;
 	c->done = true;
 }
 #endif
@@ -995,6 +1378,10 @@ void battleRun(C3D_RenderTarget* top, const MotionSet* set, const BattleRoster* 
 	char err[96] = "";
 	float camEye[3] = { 0, 6, 10 }, camAt[3] = { 0, 1, 0 };
 	int tick = 0;
+	// The round: 7200 frames (_DAT_80321d54) unless a KO comes first; then
+	// 240 frames (180 at time up) with the winner posing before it starts
+	// again. GUESS: the results screen that follows (450 frames) is step 23.
+	int roundTime = ROUND_FRAMES, over = 0, winner = -1, wins[2] = { 0, 0 };
 	// Speed meter: frames drawn and frames simulated per real second. The
 	// game logic is written per 60 Hz frame, so speed = simulated / 60.
 	u64 meterStart = osGetTime();
@@ -1022,6 +1409,8 @@ void battleRun(C3D_RenderTarget* top, const MotionSet* set, const BattleRoster* 
 	while (aptMainLoop()) {
 		hidScanInput();
 		u32 down = hidKeysDown(), held = hidKeysHeld();
+		bool towardFoe = false;   // AUTOTEST: a cue runs straight at the other robot
+		(void)towardFoe;
 		circlePosition pad;
 		hidCircleRead(&pad);
 		float sx = abs(pad.dx) > 15 ? pad.dx / 150.0f : 0.0f;
@@ -1064,6 +1453,8 @@ void battleRun(C3D_RenderTarget* top, const MotionSet* set, const BattleRoster* 
 		}
 		int scriptT = autoFrame++;
 		scripted(scriptT, &sx, &sy, &down, &held);
+		towardFoe = sx == TOWARD_FOE;
+		if (towardFoe) sx = sy = 0;
 #endif
 		if (down & KEY_START)
 			break;
@@ -1097,6 +1488,7 @@ void battleRun(C3D_RenderTarget* top, const MotionSet* set, const BattleRoster* 
 					if (haveStats) {
 						moveParams(&stats.body[b], &stats.leg[partIndex[PART_LEG] % stats.legs], &r->p);
 						r->combat = stats.body[b].combat;
+						r->rec = stats.body[b].rec;
 						r->downMax = stats.body[b].down;
 						r->hitRadius = 0.01f * stats.body[b].hitRadius;
 						// Both robots carry the parts on show: the models and
@@ -1104,14 +1496,18 @@ void battleRun(C3D_RenderTarget* top, const MotionSet* set, const BattleRoster* 
 						r->arms.gun = &stats.gun[partIndex[PART_GUN] % stats.guns];
 						r->arms.bomb = &stats.bomb[partIndex[PART_BOMB] % stats.bombs];
 						r->arms.pod = &stats.pod[partIndex[PART_POD] % stats.pods];
+						r->moTackle = set ? motionFind(set, stats.body[b].tackleMotion) : -1;
+						r->moWin = set ? motionFind(set, stats.body[b].winMotion) : -1;
 					} else {
 						r->p = fallbackParams;
 						r->combat = NULL;
+						r->rec = NULL;
 						r->downMax = 1000;
 						r->hitRadius = 0.3f;
 						r->arms.gun = NULL;
 						r->arms.bomb = NULL;
 						r->arms.pod = NULL;
+						r->moTackle = r->moWin = -1;
 					}
 				}
 				loadParts(parts, havePart, roster, partIndex);
@@ -1119,16 +1515,16 @@ void battleRun(C3D_RenderTarget* top, const MotionSet* set, const BattleRoster* 
 			if (stage.colLoaded) {
 				for (int k = 0; k < 2; k++)
 					robotSpawn(&robots[k], stage.spawn[k], k ? 0.0f : PI);
-				// GUESS: shots are dropped outside a circle (0x8024e100 holds
-				// its centre and radius squared, set in 0x80010220, not read
-				// yet); here, twice the floor's half-width around its centre.
-				const Collision* c = &stage.col;
-				bool floor = c->lo[0] < c->hi[0];
-				bounds.centre[0] = floor ? (c->lo[0] + c->hi[0]) * 0.5f : c->blocks[0].centre[0];
-				bounds.centre[1] = floor ? (c->lo[2] + c->hi[2]) * 0.5f : c->blocks[0].centre[2];
-				float half = floor ? fmaxf(c->hi[0] - c->lo[0], c->hi[2] - c->lo[2]) * 0.5f : c->blocks[0].radius;
-				bounds.radius2 = 4.0f * half * half + 25.0f;
+				// Shots are dropped outside a circle round the arena shell,
+				// 1.5 times its bounding sphere (0x80010220 sets 0x8024e100 from
+				// collision block 0).
+				const ColBlock* shell = &stage.col.blocks[0];
+				bounds.centre[0] = shell->centre[0];
+				bounds.centre[1] = shell->centre[2];
+				bounds.radius2 = 2.25f * shell->radius * shell->radius;
 			}
+			roundTime = ROUND_FRAMES;
+			over = 0;
 			reloadStage = reloadRobots = false;
 			info = true;
 		}
@@ -1143,10 +1539,34 @@ void battleRun(C3D_RenderTarget* top, const MotionSet* set, const BattleRoster* 
 			if (fl < 1e-4f) { fx = 0; fz = -1; fl = 1; }
 			fx /= fl; fz /= fl;
 			float move[2] = { fx * sy - fz * sx, fz * sy + fx * sx };
+#ifdef AUTOTEST
+			if (towardFoe) {
+				float dx = foe->pos[0] - me->pos[0], dz = foe->pos[2] - me->pos[2], l = sqrtf(dx * dx + dz * dz);
+				move[0] = l > 2.0f ? dx / l : 0;   // stop in tackle range
+				move[1] = l > 2.0f ? dz / l : 0;
+			}
+#endif
 			// A jumps, B fires the gun, R / ZR the bomb (aim with the stick
-			// while held), L / ZL the pods.
+			// while held), L / ZL the pods, X the tackle.
 			Pad pad = { (down & KEY_A) != 0, (held & KEY_A) != 0, (down & KEY_B) != 0,
-				(down & (KEY_R | KEY_ZR)) != 0, (held & (KEY_R | KEY_ZR)) != 0, (down & (KEY_L | KEY_ZL)) != 0 };
+				(down & (KEY_R | KEY_ZR)) != 0, (held & (KEY_R | KEY_ZR)) != 0, (down & (KEY_L | KEY_ZL)) != 0,
+				(down & KEY_X) != 0 };
+			// The round ends on a KO or at time up; the win check (0x8004ede4)
+			// runs before the robots, so a KO is seen the frame after.
+			if (!over) {
+				bool ko = me->hp < 1 || foe->hp < 1;
+				if (ko || roundTime <= 0) {
+					over = ko ? 240 : 180;
+					winner = me->hp < 1 && foe->hp < 1 ? -1 : me->hp > foe->hp ? 0 : foe->hp > me->hp ? 1 : -1;
+					if (winner >= 0) wins[winner]++;
+				} else {
+					roundTime--;
+				}
+			}
+			if (over) {   // no input once the round is decided
+				memset(&pad, 0, sizeof pad);
+				move[0] = move[1] = 0;
+			}
 			robotStep(me, foe, &stage.col, move, &pad);
 			float none[2] = { 0, 0 };
 			Pad idle = { 0 };
@@ -1154,6 +1574,22 @@ void battleRun(C3D_RenderTarget* top, const MotionSet* set, const BattleRoster* 
 			if (foe->state <= ST_LAND)
 				foe->yaw = atan2f(me->pos[0] - foe->pos[0], me->pos[2] - foe->pos[2]);
 			robotStep(foe, me, &stage.col, none, &idle);
+			robotPush(me, foe);
+			robotPush(foe, me);
+			if (over) {
+				// Action 20 for the winner (0x8004dc78), once it is on its feet.
+				Robot* w = winner >= 0 ? &robots[winner] : NULL;
+				if (w && w->state != ST_WIN && w->ground && w->state <= ST_LAND) {
+					w->state = ST_WIN;
+					setMotion(w, MO_WIN);
+				}
+				if (--over == 0) {
+					for (int k = 0; k < 2; k++)
+						robotSpawn(&robots[k], stage.spawn[k], k ? 0.0f : PI);
+					roundTime = ROUND_FRAMES;
+					winner = -1;
+				}
+			}
 			for (int k = 0; k < 2; k++)
 				if (robots[k].pos[1] < stage.col.lo[1] - 15.0f)
 					robotSpawn(&robots[k], stage.spawn[k], robots[k].yaw);
@@ -1161,12 +1597,16 @@ void battleRun(C3D_RenderTarget* top, const MotionSet* set, const BattleRoster* 
 			// The game's blend toward the fitted camera (0x8002e04c) uses a
 			// factor of 1.0 (r2-0x7cd8): it snaps every frame.
 			battleCamera(robots, 2, camEye, camAt);
+			robotAim(me, foe);
+			robotAim(foe, me);
 			for (int k2 = 0; k2 < 2; k2++)
 				robotAnimate(&robots[k2], &mo);
 			// The weapons run after the pose, as in 0x8003b528, and what
 			// they hit is read by the victim next frame.
 			robotFighter(me, move);
 			robotFighter(foe, none);
+			robotTackleHit(me, foe);
+			robotTackleHit(foe, me);
 			for (int k2 = 0; k2 < 2; k2++)
 				arsenalStep(&robots[k2].arms, &robots[k2].fig, &robots[1 - k2].fig, &robots[1 - k2].hit,
 					&stage.col, &bounds);
@@ -1180,8 +1620,11 @@ void battleRun(C3D_RenderTarget* top, const MotionSet* set, const BattleRoster* 
 					fprintf(log, "#   %s\n", check.line[k]);
 			}
 			if (log)
-				fprintf(log, "%d %d %d %.4f %.3f %.3f %.3f %.4f %.4f %.4f %d %d %d\n", arena, scriptT, me->state, me->speed,
-					me->pos[0], me->pos[1], me->pos[2], me->vel[0], me->vel[1], me->vel[2], me->dashesLeft, me->timer, me->sliding);
+				fprintf(log, "%d %d %d %.4f %.3f %.3f %.3f %.4f %.4f %.4f %d %d %d  %d %d %.3f %.3f %.3f %d  %d %.2f %.2f %.2f\n", arena, scriptT,
+					me->state, me->speed, me->pos[0], me->pos[1], me->pos[2], me->vel[0], me->vel[1], me->vel[2],
+					me->dashesLeft, me->timer, me->sliding, me->stage, foe->state, foe->pos[0], foe->pos[1], foe->pos[2],
+					foe->fig.hittable, me->arms.bombs[0].state, me->arms.bombs[0].pos[0], me->arms.bombs[0].pos[1],
+					me->arms.bombs[0].pos[2]);
 #endif
 		}
 
@@ -1220,8 +1663,13 @@ void battleRun(C3D_RenderTarget* top, const MotionSet* set, const BattleRoster* 
 					foe->gauge, foe->downMax);
 				if (me->arms.gun)
 					printf("%.14s/%.12s/%.12s\n", me->arms.gun->name, me->arms.bomb->name, me->arms.pod->name);
-				printf("shots %d bombs %d pods %d  hits %d/%d/%d  KO %d\n", me->arms.fired, me->arms.thrown,
-					me->arms.launched, me->arms.hits[HIT_GUN], me->arms.hits[HIT_BOMB], me->arms.hits[HIT_POD], foe->kos);
+				printf("shots %d bombs %d pods %d tackles %d  hits %d/%d/%d/%d\n", me->arms.fired, me->arms.thrown,
+					me->arms.launched, me->tackles, me->arms.hits[HIT_GUN], me->arms.hits[HIT_BOMB],
+					me->arms.hits[HIT_POD], me->tacklesLanded);
+				if (over)
+					printf("%s   wins %d - %d\n", winner < 0 ? "DRAW" : winner == 0 ? "YOU WIN" : "YOU LOSE", wins[0], wins[1]);
+				else
+					printf("time %d   wins %d - %d\n", (roundTime + 59) / 60, wins[0], wins[1]);
 			}
 #ifdef AUTOTEST
 			{
@@ -1240,6 +1688,7 @@ void battleRun(C3D_RenderTarget* top, const MotionSet* set, const BattleRoster* 
 			printf("A            jump (hold: higher)\n");
 			printf("A in the air air dash\n");
 			printf("B gun  R/ZR bomb (hold, aim)  L/ZL pod\n");
+			printf("X            tackle\n");
 			printf("D-pad < >    arena\n");
 			printf("D-pad ^ v    robot body\n");
 			printf("SELECT       next parts and leg\n");

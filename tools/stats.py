@@ -72,6 +72,8 @@ import argparse, struct, sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 from dol import Dol
+import muzzle
+import motion
 
 BODY, BODY_STRIDE, BODIES = 0x801c6c44, 0x134, 34
 LEG, LEG_STRIDE, LEGS = 0x801c952c, 0x8f, 29
@@ -148,14 +150,16 @@ def _blast(r, o):
                        *struct.unpack_from('>Hh7h', r, o + 0x14), 0)
 
 def cook_gun(d, g):
-    """char name[24]; u8 cooldown, home-only-ahead, slots, pad; then the
+    """char name[24]; u8 cooldown, home-only-ahead, slots, gun index; then the
     ground and the air pattern: u8 wind-up, volleys, per volley, fan axis,
     interval, recovery, fan phase, pad; s16 cone, fan start, fan step, pad
     (65536 = 360 deg); five phases of u16 frames, u8 trail, pad, f32 speed,
-    yaw and pitch homing (rad/frame), radius, and the hit as in _blast."""
+    yaw and pitch homing (rad/frame), radius, and the hit as in _blast;
+    last the muzzle (tools/muzzle.py): f32 point[3], axis[3] in the part
+    root's frame, part units."""
     r = d.read(GUN + GUN_STRIDE * g, GUN_STRIDE)
     out = ascii_name(_text(r[0x20:0x40]), f'gun {g}').encode('ascii')[:23].ljust(24, b'\0')
-    out += struct.pack('<4B', r[0xa1], r[0xa2], d.read(GUN_SLOTS + 0x14 * g, 1)[0], 0)
+    out += struct.pack('<4B', r[0xa1], r[0xa2], d.read(GUN_SLOTS + 0x14 * g, 1)[0], g)
     for base in (0xdc, 0x1b4):
         P = r[base:base + 0xd8]
         out += struct.pack('<8B', P[0], P[1], P[2], P[3], P[4], P[5], P[8], 0)
@@ -167,13 +171,18 @@ def cook_gun(d, g):
             sp, yaw, pitch, rad = struct.unpack_from('>4f', P, o + 4)
             out += struct.pack('<HBB4fHh7hh', dur, P[o + 0x14], 0, sp, yaw, pitch, rad,
                                *struct.unpack_from('>Hh7h', P, o + 0x16), 0)
-    return out
+    return out + _muzzle('gun', g)
+
+def _muzzle(kind, index):
+    got = muzzle.muzzle(kind, index) or ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0))
+    return struct.pack('<6f', *got[0], *got[1])
 
 def cook_bomb(d, b):
     """char name[24]; u8 count, flags (1 Tomahawk, 2 Double Mine, 4 Smash,
     8 type R), pad[2]; u16 trigger radius x100, pad; then the ground and the
     air mode: u8 aim %, reload, fuse, pad; u16 speed x1000, pad; s16
-    shot[4][4] (side, forward x100, arc height, swing); the blast."""
+    shot[4][4] (side, forward x100, arc height, swing); the blast; then the
+    throw origin as the gun's muzzle (bomb root 1, spawn entry 1)."""
     r = d.read(BOMB + BOMB_STRIDE * b, BOMB_STRIDE)
     flags = {14: 1, 28: 2, 27: 4}.get(b, 0) | (8 if _text(r[0x40:0x60]).endswith('Ｒ') else 0)
     out = ascii_name(_text(r[0x20:0x40]), f'bomb {b}').encode('ascii')[:23].ljust(24, b'\0')
@@ -182,7 +191,7 @@ def cook_bomb(d, b):
         out += struct.pack('<4BHH', r[o], r[o + 1], r[o + 2], 0, struct.unpack_from('>H', r, o + 4)[0], 0)
         out += struct.pack('<16h', *struct.unpack_from('>16h', r, o + 0x30))
         out += _blast(r, o + 8)
-    return out
+    return out + _muzzle('bom', b)
 
 def cook_pod(d, p, low):
     """char name[24]; u8 max out, per press, lock-on, reflect, gain [free,
@@ -204,15 +213,18 @@ def cook_pod(d, p, low):
 
 def cook():
     """romfs/stats/parts.bin, little-endian:
-      'STA2', u32 body, leg, gun, bomb, pod counts
+      'STA5', u32 body, leg, gun, bomb, pod counts
       body: char name[24], u16 down threshold, s16 triples[14][3], s16 steer,
             u8 dash type, u8 dashes, s8 dash pitch, u8 pad,
-            u8 combat[14] (body bytes 0x42-0x4f), u16 hit radius x100
+            u8 combat[14] (body bytes 0x42-0x4f), u16 hit radius x100,
+            then the whole 0x134-byte record as the DOL has it (big-endian),
+            char tackle motion[32], char win motion[32]
       leg:  char name[24], u8 pct[14], u8 pad[2]
       gun, bomb, pod: see cook_gun, cook_bomb and cook_pod.
     Names are ASCII; a part without one gets its table index."""
     d = Dol()
-    out = bytearray(b'STA2' + struct.pack('<5I', BODIES, LEGS, GUNS, BOMBS, PODS))
+    names = motion.motion_names()
+    out = bytearray(b'STA5' + struct.pack('<5I', BODIES, LEGS, GUNS, BOMBS, PODS))
     for i in range(BODIES):
         b = body(i, d)
         out += ascii_name(b['name'], f'body {i}').encode('ascii')[:23].ljust(24, b'\0')
@@ -221,6 +233,11 @@ def cook():
             out += struct.pack('<3h', *t)
         out += struct.pack('<hBBbB', b['steer'], b['dash_type'], b['dashes'], b['dash_pitch'], 0)
         out += bytes(b['combat']) + struct.pack('<H', b['hit_radius'])
+        out += d.read(BODY + BODY_STRIDE * i, BODY_STRIDE)   # the record itself, big-endian
+        # The body's own clips: motion index 0x23 of its table is the tackle,
+        # global ID 203 + body; the win poses are 101 + 2 body and the next.
+        for ident in (203 + i, 101 + 2 * i):
+            out += names.get(ident, '').encode('ascii')[:31].ljust(32, b'\0')
     for i in range(LEGS):
         l = leg(i, d)
         out += f'leg {i}'.encode('ascii').ljust(24, b'\0')

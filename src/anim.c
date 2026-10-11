@@ -454,6 +454,8 @@ void animPose(const Model* model, const MotionSet* set, const Motion* m, float f
 			in.pos[i][0] -= rx;
 			in.pos[i][2] -= rz;
 		}
+		if (state && state->aiming && state->aimHand >= 0 && state->aimHand < 2)
+			memcpy(in.pos[P_HAND0 + state->aimHand], state->aimAt, sizeof in.pos[0]);
 		if (state) {
 			// Blend into a new motion over blendLen frames: f = elapsed / length
 			// (0x80052884), mixed with the previous output like the game does.
