@@ -182,7 +182,7 @@ bool modelLoad(Model* m, const char* path, char* err, size_t errSize)
 			}
 			at += b->count * 20;
 		}
-		if (!m->skinned)
+		if (!m->skinned && !isEffect)
 			b->joint = -1;
 		at += b->count * sizeof(ModelVertex);
 		first += b->count;
