@@ -156,8 +156,10 @@ docker run --rm -v "C:/Users/Alexander/source/repos/custom-robo-3ds:/proj" -w /p
   0x80005da4. 0x80006658 combines body and leg into 15 s16 movement stats
   at S+0x3341c: the body has a (min, normal, max) triple per stat, the leg a
   percentage (100 = normal, 200 = max). chara.BIN is the 34 bodies x 5
-  colour variants. The per-player structs are 0x33520 apart from 0x8024e140.
-- Movement (`src/battle.c`): update 0x80049924, air dash 0x80046f58,
+  colour variants. The per-player structs are 0x33520 apart from 0x8024e120
+  (correction: this said 0x8024e140).
+- Movement (`src/battle.c`): update 0x80049924, air dash 0x80048708
+  (correction: this said 0x80046f58, which is action 11, pod in a sky dash),
   gravity/landing/position 0x8004b0a0. Velocity is in hundredths of a world
   unit per frame (pos += 0.01 * vel, z negated). The jump rises only while
   held, for stat 4 frames, and peaks at stat 3; landing lag is stat 7 x the
@@ -189,6 +191,24 @@ docker run --rm -v "C:/Users/Alexander/source/repos/custom-robo-3ds:/proj" -w /p
   root and word 8 (or -1) is, per root, a count byte then that many paths to
   effect-spawn joints. Their counts tile exactly against the runtime arrays
   at `0x80377c60`, which is what confirmed the layout.
+- Weapons (`src/weapon.c`, records cooked by `tools/stats.py`; full notes
+  in build/weapons_RE_{gun,bomb_pod,damage}.md, not committed). Actions:
+  3/4/5 gun/bomb/pod on the ground (0x8004949c, 0x800490c8, 0x80048e7c),
+  9/10/11 the same in a sky dash, 12 tackle (button 0x40), 13 stagger,
+  14 knocked down, 15 magma, 16 rebirth (30 frames + 60 invulnerable via
+  S+0xe6), 17/18/19 the 0x80 move, 20/21 win/lose. Per frame the player
+  loop 0x8003b528 runs the action, then 0x8004b0a0 (which reads last
+  frame's hit record S+0x18a0), the pose, the weapon updates (gun
+  0x80042ab8, bomb 0x8003fe98, pod 0x8003dd38) and the hit tests
+  0x80041358 (bullets) and 0x800443c0 (blasts). S+0x1074 is out[0..19]:
+  homing aims at out[1], the hit sphere sits midway between out[2] and
+  out[11], radius body+0xac/100. HP is the float S+0x74, 1000 for every
+  body; body+0x40 is the down-gauge threshold, not HP. Damage taken =
+  dmg x body+0x42 / 90 (the 900 at 0x801c6c00). Wall sphere 1.4 x
+  body+0xa6 / 100. Bombs fly a parametric arc to a stick-aimed cursor,
+  not gravity; pods home and hover on a spring. Not done yet: muzzle
+  joints (shots leave the mount), air-dash weapons, tackle, the 0x80 move,
+  the arena circle at 0x8024e100 (set in 0x80010220).
 
 ## Keeping token use down
 
@@ -204,6 +224,7 @@ docker run --rm -v "C:/Users/Alexander/source/repos/custom-robo-3ds:/proj" -w /p
 
 - `tools/dol.py` (xref / dis / func) for quick looks at main.dol.
 - `tools/ghidra/decompile.ps1 -Out build\ghidra\x.c 0xADDR ...` for C output
+  (parallel runs: add `-Copy build\ghidra_<name>`; Ghidra locks its project)
   (headless Ghidra 12.1.4 at C:\Tools; needs JAVA_HOME jdk21). REA rejects
   PowerPC, so use Ghidra directly.
 - `build/motion_RE_notes.md` (not committed) has the motion research with

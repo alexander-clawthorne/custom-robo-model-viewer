@@ -169,3 +169,78 @@ bool collideSphere(const Collision* c, float p[3], float radius, bool* ground, f
 	}
 	return hit;
 }
+
+// The face's plane is crossed somewhere inside the face (winding-agnostic, as
+// closestOnFace).
+static bool insideFace(const ColFace* f, u32 n, const float* q)
+{
+	int pos = 0, neg = 0;
+	for (u32 i = 0; i < n; i++) {
+		const float* a = f->v[i];
+		const float* b = f->v[(i + 1) % n];
+		float e[3] = { b[0] - a[0], b[1] - a[1], b[2] - a[2] };
+		float w[3] = { q[0] - a[0], q[1] - a[1], q[2] - a[2] };
+		float c[3] = { e[1] * w[2] - e[2] * w[1], e[2] * w[0] - e[0] * w[2], e[0] * w[1] - e[1] * w[0] };
+		float side = dot3(c, f->n);
+		if (side > 1e-6f) pos++;
+		else if (side < -1e-6f) neg++;
+	}
+	return !pos || !neg;
+}
+
+bool collideSegment(const Collision* c, const float a[3], const float b[3], float hit[3], float normal[3])
+{
+	float d[3] = { b[0] - a[0], b[1] - a[1], b[2] - a[2] };
+	float mid[3] = { (a[0] + b[0]) * 0.5f, (a[1] + b[1]) * 0.5f, (a[2] + b[2]) * 0.5f };
+	float half = 0.5f * sqrtf(dot3(d, d));
+	float best = 2.0f;
+	for (u32 i = 0; i < c->blockCount; i++) {
+		const ColBlock* bl = &c->blocks[i];
+		if (bl->flags & 0xc0)
+			continue;
+		float to[3] = { mid[0] - bl->centre[0], mid[1] - bl->centre[1], mid[2] - bl->centre[2] };
+		float reach = bl->radius + half;
+		if (dot3(to, to) > reach * reach)
+			continue;
+		for (u32 k = 0; k < bl->faceCount; k++) {
+			const ColFace* f = &bl->faces[k];
+			float sa = dot3(f->n, a) + f->d, sb = dot3(f->n, b) + f->d;
+			if (sa < 0.0f || sb >= 0.0f)
+				continue;   // one-sided: only crossing from the front counts
+			float t = sa / (sa - sb);
+			if (t >= best)
+				continue;
+			float q[3] = { a[0] + d[0] * t, a[1] + d[1] * t, a[2] + d[2] * t };
+			if (!insideFace(f, bl->nverts, q))
+				continue;
+			best = t;
+			memcpy(hit, q, sizeof q);
+			memcpy(normal, f->n, 3 * sizeof(float));
+		}
+	}
+	return best <= 1.0f;
+}
+
+float floorBelow(const Collision* c, float x, float y, float z)
+{
+	float best = -1e9f;
+	for (u32 i = 0; i < c->blockCount; i++) {
+		const ColBlock* bl = &c->blocks[i];
+		if (bl->flags & 0x80)
+			continue;
+		float dx = x - bl->centre[0], dz = z - bl->centre[2];
+		if (dx * dx + dz * dz > bl->radius * bl->radius)
+			continue;
+		for (u32 k = 0; k < bl->faceCount; k++) {
+			const ColFace* f = &bl->faces[k];
+			if (f->n[1] < FLOOR_NY)
+				continue;
+			// Height of the face's plane under (x, z).
+			float h = -(f->n[0] * x + f->n[2] * z + f->d) / f->n[1];
+			float q[3] = { x, h, z };
+			if (h <= y && h > best && insideFace(f, bl->nverts, q))
+				best = h;
+		}
+	}
+	return best;
+}
