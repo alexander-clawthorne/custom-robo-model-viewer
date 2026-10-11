@@ -1382,6 +1382,8 @@ void battleRun(C3D_RenderTarget* top, const MotionSet* set, const BattleRoster* 
 	// 240 frames (180 at time up) with the winner posing before it starts
 	// again. GUESS: the results screen that follows (450 frames) is step 23.
 	int roundTime = ROUND_FRAMES, over = 0, winner = -1, wins[2] = { 0, 0 };
+	bool cpu = false;   // Y: the other robot runs a fixed test loop
+	int cpuT = 0;
 	// Speed meter: frames drawn and frames simulated per real second. The
 	// game logic is written per 60 Hz frame, so speed = simulated / 60.
 	u64 meterStart = osGetTime();
@@ -1458,6 +1460,7 @@ void battleRun(C3D_RenderTarget* top, const MotionSet* set, const BattleRoster* 
 #endif
 		if (down & KEY_START)
 			break;
+		if (down & KEY_Y) { cpu = !cpu; cpuT = 0; info = true; }
 		if (down & KEY_DRIGHT) { arena = (arena + 1) % roster->arenas; reloadStage = true; }
 		if (down & KEY_DLEFT) { arena = (arena + roster->arenas - 1) % roster->arenas; reloadStage = true; }
 		if (down & KEY_DUP) { body = (body + 1) % bodies; reloadRobots = true; }
@@ -1568,12 +1571,26 @@ void battleRun(C3D_RenderTarget* top, const MotionSet* set, const BattleRoster* 
 				move[0] = move[1] = 0;
 			}
 			robotStep(me, foe, &stage.col, move, &pad);
-			float none[2] = { 0, 0 };
 			Pad idle = { 0 };
-			// The other robot stands its ground facing this one.
-			if (foe->state <= ST_LAND)
+			float cpuMove[2] = { 0, 0 };
+			if (cpu && !over) {
+				// Test CPU (Y toggles it), not the game's AI: the same 4-second
+				// loop -- close in, two shots, a jump, a pod, a bomb, a tackle.
+				int t = cpuT++ % 240;
+				float dx = me->pos[0] - foe->pos[0], dz = me->pos[2] - foe->pos[2], l = sqrtf(dx * dx + dz * dz);
+				if (t < 60 && l > 3.0f) { cpuMove[0] = dx / l; cpuMove[1] = dz / l; }
+				idle.gun = t == 70 || t == 100;
+				idle.jump = t == 130;
+				idle.jumpHeld = t >= 130 && t < 140;
+				idle.pod = t == 160;
+				idle.bomb = t == 190;
+				idle.bombHeld = t >= 190 && t < 205;
+				idle.tackle = t == 230 && l < 4.0f;
+			} else if (foe->state <= ST_LAND) {
+				// Otherwise it stands its ground facing this one.
 				foe->yaw = atan2f(me->pos[0] - foe->pos[0], me->pos[2] - foe->pos[2]);
-			robotStep(foe, me, &stage.col, none, &idle);
+			}
+			robotStep(foe, me, &stage.col, cpuMove, &idle);
 			robotPush(me, foe);
 			robotPush(foe, me);
 			if (over) {
@@ -1604,7 +1621,7 @@ void battleRun(C3D_RenderTarget* top, const MotionSet* set, const BattleRoster* 
 			// The weapons run after the pose, as in 0x8003b528, and what
 			// they hit is read by the victim next frame.
 			robotFighter(me, move);
-			robotFighter(foe, none);
+			robotFighter(foe, cpuMove);
 			robotTackleHit(me, foe);
 			robotTackleHit(foe, me);
 			for (int k2 = 0; k2 < 2; k2++)
@@ -1689,6 +1706,7 @@ void battleRun(C3D_RenderTarget* top, const MotionSet* set, const BattleRoster* 
 			printf("A in the air air dash\n");
 			printf("B gun  R/ZR bomb (hold, aim)  L/ZL pod\n");
 			printf("X            tackle\n");
+			printf("Y            test CPU %s\n", cpu ? "ON" : "off");
 			printf("D-pad < >    arena\n");
 			printf("D-pad ^ v    robot body\n");
 			printf("SELECT       next parts and leg\n");
