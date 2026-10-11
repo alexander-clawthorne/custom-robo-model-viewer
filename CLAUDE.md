@@ -168,8 +168,21 @@ docker run --rm -v "C:/Users/Alexander/source/repos/custom-robo-3ds:/proj" -w /p
   0x80048050, the Lightning Sky models). All hang still for stat 9 frames
   first; gravity is applied only by action 0. 0x801c6c00 is a
   block of mixed s16/float tuning constants (2.0 at +4, 6.0 at +8, a
-  3-entry floor-friction table per surface kind at +0x1c). The battle
-  camera is 0x800333dc (CAMMODE_* names at 0x801bc928), not yet ported.
+  3-entry floor table per surface kind at +0x1c: slip threshold, slide
+  step, grip). On the ground the robot takes facing x speed outright
+  unless that is more than 0.02/frame from its velocity; then it slides
+  at 0.002/frame -- the skid after landing a moving jump. The floor is
+  found by a downward query, 0x8006207c; walls by a routine not yet
+  traced. Per-body dimensions (30 floats, stride 0x78 from 0x801c5c10,
+  copied to S+0x17f4): word 0 is the height (Ray 1.31).
+- Battle camera (`battleCamera` in src/battle.c): camera modes are an
+  (init, update) pair per mode at 0x801f7ff0, names at 0x801f88a4
+  (0x800333dc is RESULT's init, not the battle camera). Battle is mode 2,
+  CAMMODE_MIDDLE, update 0x80035bcc: fit 0x8002b3c4, blend 0x8002e04c
+  (factor 1.0, so it snaps). Fixed direction, yaw 0 looking down -Z,
+  pitch 30 (r13-0x7f98); every robot is fitted inside planes 25.2 either
+  side and 20 below / 10 above the view axis (so: a 30-degree view aimed
+  35 down), padded 0.85 / 0.546 x 1.9 for two robots, min 5.7 away.
   r2 = 0x804581a0, r13 = 0x804543c0.
 - Part files carry two path lists the loader at `0x80073cb8` walks (`02` =
   child, `01` = next, as in the rig paths): header word 4 is one path per

@@ -183,13 +183,15 @@ typedef struct {
 	int hold;             // frames the jump may still rise (S+0x13a)
 	int dashesLeft;       // S+0x13b
 	int windup;           // dash wind-up frames still to go (S+0xe2)
+	bool sliding;         // skidding on the ground (S+0x139 == 1)
 	int pendingLag;       // after-dash lag waiting for the landing (S+0xe4)
 	bool ground;
 	// What the last moves measured, for the bottom screen and the autotest.
 	bool jumping;
 	float takeoffY, peakY, lastJump, topSpeed;
 	float wantYaw;        // where the stick last pointed, in the world
-	int heldFrames, lastHeld, dashesThisJump, lastDashes, lastLag;
+	int heldFrames, lastHeld, dashesThisJump, lastDashes, lastLag, lastJumpLag;
+	float lastLandSpeed;  // horizontal speed at the last landing
 	int motion;           // MO_*
 	float frame;
 	AnimState anim;
@@ -254,11 +256,36 @@ static void robotSpawn(Robot* r, const float* at, float yaw)
 	r->timer = r->hold = r->dashesLeft = r->pendingLag = r->windup = 0;
 	r->ground = r->jumping = false;
 	r->lastJump = r->topSpeed = 0;
-	r->lastHeld = r->lastDashes = r->lastLag = 0;
+	r->lastHeld = r->lastDashes = r->lastLag = r->lastJumpLag = 0;
 	r->motion = -1;
 	r->anim.hasLast = false;
 	setMotion(r, MO_JUMP);
 	r->frame = 1e6f;  // falling in: hold the end of the jump
+}
+
+// Ground velocity, 0x8004b0a0: the robot wants its facing times its run
+// speed, times the floor's grip. Within a threshold of its current velocity
+// it simply takes it; beyond, it slides, changing by a fixed step a frame --
+// which is the skid after landing from a moving jump, and the ice of some
+// floors. Values per surface kind from 0x801c6c1c: (threshold 0.02 x, step
+// 0.002 x, grip 0.01 x); every ordinary floor is (100, 100, 100).
+// GUESS: every face is treated as kind 0, the surface kind is not read.
+#define SLIP_THRESHOLD (2.0f * VEL)
+#define SLIDE_STEP (0.2f * VEL)
+
+static void groundVelocity(Robot* r)
+{
+	float want[2] = { sinf(r->yaw) * r->speed, cosf(r->yaw) * r->speed };
+	float d[2] = { want[0] - r->vel[0], want[1] - r->vel[2] };
+	float len = sqrtf(d[0] * d[0] + d[1] * d[1]);
+	r->sliding = len > SLIP_THRESHOLD;
+	if (r->sliding) {
+		r->vel[0] += d[0] / len * SLIDE_STEP;
+		r->vel[2] += d[1] / len * SLIDE_STEP;
+	} else {
+		r->vel[0] = want[0];
+		r->vel[2] = want[1];
+	}
 }
 
 // One frame of movement. move is the wanted direction on the ground plane
@@ -278,12 +305,12 @@ static void robotStep(Robot* r, const Collision* col, const float move[2], bool 
 
 	switch (r->state) {
 	case ST_LAND:
-		// Landing lag: no control. GUESS: the robot just slows to a stop.
-		r->speed -= r->speed < p->runAccel ? r->speed : p->runAccel;
+		// Landing lag: no control -- the movement code's ground block is
+		// skipped, so the run speed stays where it was (0 after a jump) and
+		// the robot skids to it.
 		if (--r->timer <= 0)
 			r->state = ST_GROUND;
-		r->vel[0] = sinf(r->yaw) * r->speed;
-		r->vel[2] = cosf(r->yaw) * r->speed;
+		groundVelocity(r);
 		break;
 	case ST_GROUND: {
 		// Turn the facing toward the stick, then run along the facing at a
@@ -293,8 +320,7 @@ static void robotStep(Robot* r, const Collision* col, const float move[2], bool 
 		float target = p->runSpeed * mag;
 		float d = target - r->speed;
 		r->speed += fabsf(d) < p->runAccel ? d : copysignf(p->runAccel, d);
-		r->vel[0] = sinf(r->yaw) * r->speed;
-		r->vel[2] = cosf(r->yaw) * r->speed;
+		groundVelocity(r);
 		if (r->speed > r->topSpeed)
 			r->topSpeed = r->speed;
 		if (press) {
@@ -426,18 +452,17 @@ static void robotStep(Robot* r, const Collision* col, const float move[2], bool 
 			r->lastJump = r->peakY - r->takeoffY;
 			r->lastHeld = r->heldFrames;
 			r->lastDashes = r->dashesThisJump;
+			r->lastJumpLag = lag;   // the jump's own landing, not a later step off a ledge
+			r->lastLandSpeed = sqrtf(r->vel[0] * r->vel[0] + r->vel[2] * r->vel[2]);
 		}
 		r->jumping = false;
 		r->lastLag = lag;
 		r->pendingLag = 0;
 		r->hold = 0;
 		r->vel[1] = 0;
-		// GUESS: the run picks up the horizontal speed the robot lands with,
-		// up to the top speed. Zeroing it stalled a robot perched on an
-		// obstacle's edge, where the floor contact comes and goes each frame.
-		r->speed = sqrtf(r->vel[0] * r->vel[0] + r->vel[2] * r->vel[2]);
-		if (r->speed > p->runSpeed)
-			r->speed = p->runSpeed;
+		// The run speed is left alone: it is 0 after a jump or a dash (both
+		// clear it) and still the run's after walking off a ledge. The
+		// horizontal velocity carries over and skids (groundVelocity).
 		if (lag > 0) {
 			r->state = ST_LAND;
 			r->timer = lag;
@@ -485,6 +510,71 @@ static void robotDraw(Robot* r, const Model* parts, const bool* havePart,
 	Mtx_Translate(&place, r->pos[0], r->pos[1], r->pos[2], true);
 	Mtx_RotateY(&place, r->yaw + MODEL_YAW, true);
 	drawRobot(&r->body, r->world, parts, havePart, projection, &place);
+}
+
+// ------------------------------------------------------------------ camera
+// The battle camera, CAMMODE_MIDDLE: the camera-mode table at 0x801f7ff0
+// holds an (init, update) pair per mode, and mode 2's update 0x80035bcc
+// calls the fit at 0x8002b3c4 and the blend at 0x8002e04c. The fit keeps a
+// fixed direction -- yaw 0, looking down -Z, pitched 30 degrees (r13-0x7f98)
+// -- and moves the camera until every robot sits inside four frustum planes:
+// 25.2 degrees either side (30 x 1.68 / 2), and from 20 below to 10 above
+// the view axis. Those two vertical planes are a 30-degree view aimed 5
+// degrees lower, hence CAM_PITCH 35. Each robot is pushed out by a margin
+// first, 0.85 sideways and 0.546 vertically, both x 1.9 with two robots
+// (0x801bcac8); its low point is 0.25 above the feet and its high point
+// 1.15 x height / 1.31. The camera stays 5.7 (r13-0x7f90) behind the
+// nearest robot.
+#define CAM_FOVY 30.0f
+#define CAM_PITCH (35.0f * DEG)
+#define CAM_NEAREST 5.7f
+
+static void battleCamera(const Robot* robots, int count, float eye[3], float at[3])
+{
+	// Horizontal half-angle from the 3DS screen, which is 1.667 wide, not
+	// the game's 1.68, so nothing it fits is cropped.
+	const float b = CAM_FOVY * 0.5f * DEG;
+	const float a = atanf(tanf(b) * 400.0f / 240.0f);
+	const float mh = 0.85f * 1.9f, mv = 0.546f * 1.9f;
+	const float f[3] = { 0, -sinf(CAM_PITCH), -cosf(CAM_PITCH) };
+	const float r[3] = { 1, 0, 0 };
+	const float u[3] = { 0, cosf(CAM_PITCH), -sinf(CAM_PITCH) };
+	float nR[3], nL[3], nT[3], nB[3];   // inward normals
+	for (int k = 0; k < 3; k++) {
+		nR[k] = -cosf(a) * r[k] + sinf(a) * f[k];
+		nL[k] = cosf(a) * r[k] + sinf(a) * f[k];
+		nT[k] = -cosf(b) * u[k] + sinf(b) * f[k];
+		nB[k] = cosf(b) * u[k] + sinf(b) * f[k];
+	}
+	// Each plane's tightest robot: the eye's offset along the plane normal
+	// can be at most p.n - margin.
+	float kR = 1e9f, kL = 1e9f, kT = 1e9f, kB = 1e9f, nearest = 1e9f;
+	for (int i = 0; i < count; i++) {
+		const float* q = robots[i].pos;
+		float low[3] = { q[0], q[1] + 0.25f, q[2] };
+		float high[3] = { q[0], q[1] + 1.15f, q[2] };   // GUESS: height 1.31, S+0x17d4 not read
+		float dR = low[0] * nR[0] + low[1] * nR[1] + low[2] * nR[2] - mh;
+		float dL = low[0] * nL[0] + low[1] * nL[1] + low[2] * nL[2] - mh;
+		float dB = low[0] * nB[0] + low[1] * nB[1] + low[2] * nB[2] - mv;
+		float dT = high[0] * nT[0] + high[1] * nT[1] + high[2] * nT[2] - mv;
+		float depth = low[0] * f[0] + low[1] * f[1] + low[2] * f[2];
+		if (dR < kR) kR = dR;
+		if (dL < kL) kL = dL;
+		if (dB < kB) kB = dB;
+		if (dT < kT) kT = dT;
+		if (depth < nearest) nearest = depth;
+	}
+	// Each pair of planes fixes the eye across and along the view; the
+	// further back of the two distances wins.
+	float er = (kL - kR) / (2.0f * cosf(a));
+	float eu = (kB - kT) / (2.0f * cosf(b));
+	float ef = fminf((kR + kL) / (2.0f * sinf(a)), (kT + kB) / (2.0f * sinf(b)));
+	if (nearest - ef < CAM_NEAREST)
+		ef = nearest - CAM_NEAREST;
+	for (int k = 0; k < 3; k++) {
+		eye[k] = er * r[k] + eu * u[k] + ef * f[k];
+		at[k] = eye[k] + f[k] * 10.0f;
+	}
 }
 
 // ------------------------------------------------------------------ scripted input
@@ -535,16 +625,22 @@ static void scripted(int t, float* x, float* y, u32* down, u32* held)
 
 // Readings taken at fixed points of the script, then judged.
 typedef struct {
-	float topSpeed, full, hop, turn, aim;
-	int fullHeld, lag, dashes;
+	float topSpeed, full, hop, turn, aim, landSpeed;
+	int fullHeld, lag, dashes, skid;
 	bool done, pass;
-	char line[6][40];
+	char line[7][40];
 } AutoCheck;
 
 static void autoSample(AutoCheck* c, const Robot* r, int t, float* yawMark)
 {
 	if (t == 220) c->topSpeed = r->topSpeed;
-	if (t == 335) { c->full = r->lastJump; c->fullHeld = r->lastHeld; c->lag = r->lastLag; }
+	if (t == 335) {
+		c->full = r->lastJump; c->fullHeld = r->lastHeld; c->lag = r->lastJumpLag;
+		c->landSpeed = r->lastLandSpeed;
+	}
+	// The full jump keeps the run's momentum (no stick in the air), so its
+	// landing skids: count the frames.
+	if (t > 220 && t < 335 && r->sliding && (r->state == ST_GROUND || r->state == ST_LAND)) c->skid++;
 	if (t == 375) c->hop = r->lastJump;
 	// Most dashes in one jump: once they are spent the script's further
 	// presses land as new hops, which start the count again.
@@ -567,13 +663,18 @@ static void autoSample(AutoCheck* c, const Robot* r, int t, float* yawMark)
 	bool dash = c->dashes == p->dashes;
 	bool turn = c->turn > 90.0f && c->aim < 10.0f;
 	bool land = c->lag > 0;
+	// Each skid frame closes 0.002 of the gap; it ends inside 0.02 of the
+	// target (0 during the lag, the stick is neutral after it).
+	int skidWant = c->landSpeed > SLIP_THRESHOLD ? (int)ceilf((c->landSpeed - SLIP_THRESHOLD) / SLIDE_STEP) : 0;
+	bool skid = abs(c->skid - skidWant) <= 1;
 	snprintf(c->line[0], 40, "run  %s top %.3f/%.3f", run ? "ok  " : "FAIL", c->topSpeed, p->runSpeed);
 	snprintf(c->line[1], 40, "jump %s %.2f of %.2f, %df", full ? "ok  " : "FAIL", c->full, want, c->fullHeld);
 	snprintf(c->line[2], 40, "hop  %s %.2f", hop ? "ok  " : "FAIL", c->hop);
 	snprintf(c->line[3], 40, "dash %s %d of %d", dash ? "ok  " : "FAIL", c->dashes, p->dashes);
 	snprintf(c->line[4], 40, "turn %s %.0f deg, %.0f off stick", turn ? "ok  " : "FAIL", c->turn, c->aim);
 	snprintf(c->line[5], 40, "land %s lag %d", land ? "ok  " : "FAIL", c->lag);
-	c->pass = run && full && hop && dash && turn && land;
+	snprintf(c->line[6], 40, "skid %s %d of %d frames", skid ? "ok  " : "FAIL", c->skid, skidWant);
+	c->pass = run && full && hop && dash && turn && land && skid;
 	c->done = true;
 }
 #endif
@@ -663,7 +764,6 @@ void battleRun(C3D_RenderTarget* top, const MotionSet* set, const BattleRoster* 
 	bool reloadStage = true, reloadRobots = true, info = true;
 	char err[96] = "";
 	float camEye[3] = { 0, 6, 10 }, camAt[3] = { 0, 1, 0 };
-	bool camSnap = true;
 	int tick = 0;
 	// Speed meter: frames drawn and frames simulated per real second. The
 	// game logic is written per 60 Hz frame, so speed = simulated / 60.
@@ -711,7 +811,7 @@ void battleRun(C3D_RenderTarget* top, const MotionSet* set, const BattleRoster* 
 			if (last) {
 				consoleClear();
 				printf("Last arena (%d):\n", arena + 1);
-				for (int k = 0; k < 6; k++) puts(lastCheck.line[k]);
+				for (int k = 0; k < 7; k++) puts(lastCheck.line[k]);
 				printf("AUTOTEST DONE: %d of %d arenas passed%s", autoPasses, autoRuns, "\n");
 				if (log) {
 					// The test script closes Citra once it sees this line.
@@ -774,7 +874,7 @@ void battleRun(C3D_RenderTarget* top, const MotionSet* set, const BattleRoster* 
 				for (int k = 0; k < 2; k++)
 					robotSpawn(&robots[k], stage.spawn[k], k ? 0.0f : PI);
 			reloadStage = reloadRobots = false;
-			camSnap = info = true;
+			info = true;
 		}
 
 		bool ready = stage.colLoaded && robots[0].loaded && robots[1].loaded;
@@ -796,23 +896,9 @@ void battleRun(C3D_RenderTarget* top, const MotionSet* set, const BattleRoster* 
 				if (robots[k].pos[1] < stage.col.lo[1] - 15.0f)
 					robotSpawn(&robots[k], stage.spawn[k], robots[k].yaw);
 
-			// Camera: behind this robot on the line from the other one, high
-			// enough to see the floor, looking at a point between the two.
-			// PLACEHOLDER layout until the game's camera is read.
-			float ax = me->pos[0] - foe->pos[0], az = me->pos[2] - foe->pos[2];
-			float sep = sqrtf(ax * ax + az * az);
-			if (sep < 1e-3f) { ax = 0; az = 1; sep = 1; }
-			ax /= sep; az /= sep;
-			float back = 5.0f + sep * 0.35f;
-			float eye[3] = { me->pos[0] + ax * back, me->pos[1] + 3.2f + sep * 0.15f, me->pos[2] + az * back };
-			float at[3] = { me->pos[0] - ax * sep * 0.35f, (me->pos[1] + foe->pos[1]) * 0.5f + 0.9f,
-				me->pos[2] - az * sep * 0.35f };
-			float k = camSnap ? 1.0f : 0.08f;
-			for (int a = 0; a < 3; a++) {
-				camEye[a] += (eye[a] - camEye[a]) * k;
-				camAt[a] += (at[a] - camAt[a]) * k;
-			}
-			camSnap = false;
+			// The game's blend toward the fitted camera (0x8002e04c) uses a
+			// factor of 1.0 (r2-0x7cd8): it snaps every frame.
+			battleCamera(robots, 2, camEye, camAt);
 			for (int k2 = 0; k2 < 2; k2++)
 				robotAnimate(&robots[k2], &mo);
 			meterSteps++;
@@ -821,12 +907,12 @@ void battleRun(C3D_RenderTarget* top, const MotionSet* set, const BattleRoster* 
 			if (log && scriptT == SCRIPT_FRAMES - 1) {
 				fprintf(log, "# arena %d body %d leg %d %s\n", arena, body, partIndex[PART_LEG],
 					check.pass ? "PASS" : "FAIL");
-				for (int k = 0; k < 6; k++)
+				for (int k = 0; k < 7; k++)
 					fprintf(log, "#   %s\n", check.line[k]);
 			}
 			if (log)
-				fprintf(log, "%d %d %d %.4f %.3f %.3f %.3f %.4f %.4f %.4f %d %d\n", arena, scriptT, me->state, me->speed,
-					me->pos[0], me->pos[1], me->pos[2], me->vel[0], me->vel[1], me->vel[2], me->dashesLeft, me->timer);
+				fprintf(log, "%d %d %d %.4f %.3f %.3f %.3f %.4f %.4f %.4f %d %d %d\n", arena, scriptT, me->state, me->speed,
+					me->pos[0], me->pos[1], me->pos[2], me->vel[0], me->vel[1], me->vel[2], me->dashesLeft, me->timer, me->sliding);
 #endif
 		}
 
@@ -848,7 +934,8 @@ void battleRun(C3D_RenderTarget* top, const MotionSet* set, const BattleRoster* 
 			printf("parts g%d b%d p%d%s\n", partIndex[0], partIndex[1], partIndex[2], haveStats ? "" : "  (no stats)");
 			if (err[0]) printf("%s\n", err);
 			if (ready) {
-				printf("\nstate  %-10s dashes %d\n", stateName[me->state], me->dashesLeft);
+				bool skid = me->sliding && (me->state == ST_GROUND || me->state == ST_LAND);
+				printf("\nstate  %-10s dashes %d%s\n", stateName[me->state], me->dashesLeft, skid ? "  skid" : "");
 				printf("pos    %6.2f %6.2f %6.2f\n", me->pos[0], me->pos[1], me->pos[2]);
 				printf("vel    %6.3f %6.3f %6.3f\n", me->vel[0], me->vel[1], me->vel[2]);
 				printf("motion %s\n", me->motion >= 0 ? motionName[me->motion] : "-");
@@ -868,7 +955,7 @@ void battleRun(C3D_RenderTarget* top, const MotionSet* set, const BattleRoster* 
 					!c->done ? "running" : c->pass ? "PASS" : "FAIL",
 					autoPasses + (check.done && check.pass), autoRuns + check.done);
 				if (c->done)
-					for (int k = 0; k < 6; k++) printf("%s\n", c->line[k]);
+					for (int k = 0; k < 7; k++) printf("%s\n", c->line[k]);
 			}
 #endif
 			printf("\n%4.1f fps   game speed %3.0f%%\n", fps, speed * 100.0f);
@@ -892,7 +979,7 @@ void battleRun(C3D_RenderTarget* top, const MotionSet* set, const BattleRoster* 
 		C3D_FrameDrawOn(top);
 		if (ready) {
 			C3D_Mtx projection, view;
-			Mtx_PerspTilt(&projection, C3D_AngleFromDegrees(50.0f), C3D_AspectRatioTop, 0.1f, 1500.0f, false);
+			Mtx_PerspTilt(&projection, C3D_AngleFromDegrees(CAM_FOVY), C3D_AspectRatioTop, 0.1f, 1500.0f, false);
 			Mtx_LookAt(&view, FVec3_New(camEye[0], camEye[1], camEye[2]),
 				FVec3_New(camAt[0], camAt[1], camAt[2]), FVec3_New(0, 1, 0), false);
 			if (stage.arenaLoaded)
