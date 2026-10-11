@@ -40,7 +40,10 @@ docker run --rm -v "C:/Users/Alexander/source/repos/custom-robo-3ds:/proj" -w /p
   one line per frame). Fast-forward does not change results: the game steps
   per frame, not per second. One robot: `AUTOBODY=<0-33> AUTOLEG=<0-28>
   AUTOARENA=<0-39>` (4 s); all bodies' dash types: `AUTOSTEP=4` (~40 s).
-  Screenshots only for things that must be seen.
+  Screenshots only for things that must be seen. The run also fires every
+  weapon, tackles, and times the knockdown / rebirth / invulnerability.
+- Battle controls (the user's choice): A jump / air dash, B gun, R/ZR bomb
+  (hold to aim), L/ZL pod, X tackle.
 - **Never take focus from the user's desktop.** Launch, push Citra to the back,
   capture with PrintWindow flag 2. All done by `tools/citra/autotest.ps1 -Dir build\shots`.
 - Review runs with `tools/contact_sheet.py` (one small image), not single shots.
@@ -205,10 +208,22 @@ docker run --rm -v "C:/Users/Alexander/source/repos/custom-robo-3ds:/proj" -w /p
   out[11], radius body+0xac/100. HP is the float S+0x74, 1000 for every
   body; body+0x40 is the down-gauge threshold, not HP. Damage taken =
   dmg x body+0x42 / 90 (the 900 at 0x801c6c00). Wall sphere 1.4 x
-  body+0xa6 / 100. Bombs fly a parametric arc to a stick-aimed cursor,
-  not gravity; pods home and hover on a spring. Not done yet: muzzle
-  joints (shots leave the mount), air-dash weapons, tackle, the 0x80 move,
-  the arena circle at 0x8024e100 (set in 0x80010220).
+  body+0xa6 / 100, centred lerp(out[2], out[11], body+0xa8 / 100); the
+  robot push uses it and sphere B (out[2], body+0xa6 / 100), and skips a
+  tackling robot (S+0x1d8 0x40000), which is how a tackle connects. Bombs
+  fly a parametric arc to a stick-aimed cursor, not gravity; pods home and
+  hover on a spring. Muzzles (`tools/muzzle.py`): gun spawn entry 0 and
+  bomb entry 1 of the part's header-word-8 list (one array across roots,
+  S+0x8b8); world = slot matrix x 0.1 x rel. While firing, the gun hand's
+  IK target is the opponent's out[0] and the bomb hand's the cursor
+  (0x8003c4f0 -> 0x80058ad0). Gun fan: positive = right / down. Shots die
+  outside 1.5 x collision block 0's sphere (0x80010220). Tackle: body
+  bytes 0xd0-0xf0, motion ID 203 + body; win pose ID 101 + 2 body. Button
+  0x80 (actions 17-19) is the tag battle's robot change; in 1v1 the input
+  mapper 0x800057b8 makes it 0x100, a target switch. A KO ends the round
+  (0x8004ede4): 240 frames, the winner posing, then 450 of results;
+  7200 frames to time up. Not ported: the torso lean while aiming
+  (pitch clamped -50..+20), the gun deploy animation, hitstop.
 
 ## Keeping token use down
 
