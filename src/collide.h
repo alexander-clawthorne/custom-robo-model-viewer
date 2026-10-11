@@ -20,6 +20,8 @@ typedef struct {
 	ColBlock* blocks;
 	u32 blockCount;
 	float lo[3], hi[3];   // bounds of the floor faces of block 0, the shell
+	float top;            // highest face anyone can stand on, in any block
+	                      // (arena 24's shell floor is a pit 10 below the stage)
 } Collision;
 
 bool collisionLoad(Collision* c, const char* path);

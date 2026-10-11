@@ -66,6 +66,18 @@ endif
 ifneq ($(AUTOSTEP),)
 CFLAGS	+=	-DAUTOTEST_STEP=$(AUTOSTEP)
 endif
+# AUTOCAT=battle only: test one robot instead of stepping through them.
+# AUTOBODY=<0-33> fixes the body, AUTOLEG=<0-28> the leg, AUTOARENA=<0-39>
+# runs that arena once and exits.
+ifneq ($(AUTOBODY),)
+CFLAGS	+=	-DAUTOTEST_BODY=$(AUTOBODY)
+endif
+ifneq ($(AUTOLEG),)
+CFLAGS	+=	-DAUTOTEST_LEG=$(AUTOLEG)
+endif
+ifneq ($(AUTOARENA),)
+CFLAGS	+=	-DAUTOTEST_ARENA=$(AUTOARENA)
+endif
 endif
 
 CXXFLAGS	:= $(CFLAGS) -fno-rtti -fno-exceptions -std=gnu++11

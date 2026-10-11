@@ -38,14 +38,22 @@ the game runs at 60 Hz:
   4  frames the button may be held to keep rising
   5  air speed cap: 0.1 * s5
   6  air acceleration: 0.003 * s6 per frame
-  7  read once by the movement code (0x80049a90), purpose not traced
+  7  landing lag: frames at full impact (a 6-unit fall), scaled by impact
   8  gravity: 0.01 * 0.3 * 2.0 * s8 per frame (2.0 is the float at 0x801c6c04)
-  9  air-dash wind-up counter (S+0xe2)
-  10 frames after an air dash (S+0xe4)
-  11 read by the dash variants only (0x80048c0c), purpose not traced
-  12 air-dash length in frames
-  13 air-dash speed: 0.1 * s13
-  14 air-dash steering: 0.1 * s14 degrees per frame
+  9  air-dash wind-up: frames the robot hangs still first (S+0xe2)
+  10 landing lag owed after an air dash (S+0xe4)
+  11 air-jump height (dash type 1): vy = sqrt(2 g s11)
+  12 air-dash / sky-dash length in frames
+  13 air-dash / sky-dash speed: 0.1 * s13
+  14 sky-dash steering: 0.1 * s14 degrees per frame
+The press itself (in 0x80049924) picks one of three actions by the body's
+dash type at +0x56, from the action table at 0x801f8eb8 indexed by S+0x528:
+  type 0  action 7, air dash   0x80048708  a straight line
+  type 1  action 6, air jump   0x80048b10  a second jump straight up
+  type 2  action 8, sky dash   0x80048050  steerable, long; gun / bomb / pod
+                                           presses during it are actions 9-11
+The wiki's model pages agree (Ray 01 "Air Dash" x2, Peregrine "Air Jump" x3,
+the Lightning Sky models sky dash), which is a cross-check, not the source.
 The legs' labels agree: High Jump raises 3, Wide Jump 5, the G+/G- pair 8,
 the long and short verniers 12.
 """
@@ -64,7 +72,7 @@ TRIPLES = [('h', 0x70), ('h', 0x76), ('h', 0x7c), ('h', 0x82), ('h', 0x88), ('h'
            ('h', 0x94), ('h', 0x9a), ('H', 0xa0), ('B', 0x50), ('B', 0x53), ('H', 0x58),
            ('B', 0x61), ('H', 0x64)]
 NAMES = ['run speed', 'run accel', 'turn', 'jump height', 'jump hold', 'air speed',
-         'air accel', 'stat 7', 'gravity', 'dash wind-up', 'after dash', 'stat 11',
+         'air accel', 'land lag', 'gravity', 'dash wind-up', 'after dash', 'air jump',
          'dash frames', 'dash speed', 'dash steer']
 
 def _text(b):

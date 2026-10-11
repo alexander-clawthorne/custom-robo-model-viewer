@@ -30,6 +30,17 @@ docker run --rm -v "C:/Users/Alexander/source/repos/custom-robo-3ds:/proj" -w /p
   of models. `make` does not see those two change, so clear the autotest build
   first, every time:
   `rm -rf build3ds_auto custom-robo-viewer-autotest.elf custom-robo-viewer-autotest.3dsx`
+- **Battle tests log, they don't screenshot.** The battle autotest
+  (`AUTOCAT=battle`) runs every movement once per arena -- run, held jump,
+  hop, all air dashes, a turn, a wall -- checks each against the stats and
+  writes the results to `sdmc:/cr_autotest.log`. Run it with
+  `tools/citra/autotest.ps1 -Fast -Shots 0`: Citra unthrottled, no shots,
+  closed when the log's `# DONE` line appears, and the log copied to
+  `build/cr_autotest.log` (`# arena ...` lines are the verdicts, the rest
+  one line per frame). Fast-forward does not change results: the game steps
+  per frame, not per second. One robot: `AUTOBODY=<0-33> AUTOLEG=<0-28>
+  AUTOARENA=<0-39>` (4 s); all bodies' dash types: `AUTOSTEP=4` (~40 s).
+  Screenshots only for things that must be seen.
 - **Never take focus from the user's desktop.** Launch, push Citra to the back,
   capture with PrintWindow flag 2. All done by `tools/citra/autotest.ps1 -Dir build\shots`.
 - Review runs with `tools/contact_sheet.py` (one small image), not single shots.
@@ -150,7 +161,12 @@ docker run --rm -v "C:/Users/Alexander/source/repos/custom-robo-3ds:/proj" -w /p
   gravity/landing/position 0x8004b0a0. Velocity is in hundredths of a world
   unit per frame (pos += 0.01 * vel, z negated). The jump rises only while
   held, for stat 4 frames, and peaks at stat 3; landing lag is stat 7 x the
-  impact (vs a 6-unit fall) plus stat 10 after an air dash. 0x801c6c00 is a
+  impact (vs a 6-unit fall) plus stat 10 after an air dash.
+  The body's dash type (+0x56) picks the action a mid-air press starts,
+  from the table at 0x801f8eb8 indexed by S+0x528: type 0 air dash
+  (action 7, 0x80048708), 1 air jump (6, 0x80048b10), 2 sky dash (8,
+  0x80048050, the Lightning Sky models). All hang still for stat 9 frames
+  first; gravity is applied only by action 0. 0x801c6c00 is a
   block of mixed s16/float tuning constants (2.0 at +4, 6.0 at +8, a
   3-entry floor-friction table per surface kind at +0x1c). The battle
   camera is 0x800333dc (CAMMODE_* names at 0x801bc928), not yet ported.

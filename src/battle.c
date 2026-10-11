@@ -87,6 +87,9 @@ static void statsCombine(const BodyStats* b, const LegStats* l, int out[15])
 	out[14] = b->steer;
 }
 
+enum { DASH_AIR, DASH_JUMP, DASH_SKY };
+static const char* const dashTypeName[] = { "air dash", "air jump", "sky dash" };
+
 typedef struct {
 	int s[15];            // the combined stats, for the bottom screen
 	float runSpeed;       // 0.1 * s0
@@ -100,9 +103,15 @@ typedef struct {
 	int landLag;          // s7: frames of landing lag after a hard landing
 	float impactSpeed;    // fall speed that counts as a hard landing
 	int afterDash;        // s10: extra landing lag after an air dash
+	// The body's dash type (byte 0x56) picks the action the press starts,
+	// from the table at 0x801f8eb8 indexed by S+0x528: 7 air dash, 6 air
+	// jump, 8 sky dash. All three first hang still for s9 frames.
+	int dashType;         // DASH_*
+	int windup;           // s9
+	float airJump;        // type 1: sqrt(2 g s11), straight up
 	int dashFrames;       // s12
 	float dashSpeed;      // 0.1 * s13
-	float dashSteer;      // 0.1 * s14 degrees per frame
+	float dashSteer;      // 0.1 * s14 degrees per frame, sky dash only
 	float dashPitch;
 	int dashes;
 	float radius;         // collision sphere, centred this high above the feet
@@ -131,6 +140,9 @@ static void moveParams(const BodyStats* b, const LegStats* l, MoveParams* p)
 	// float at 0x801c6c08).
 	p->impactSpeed = sqrtf(2.0f * p->gravity * 6.0f);
 	p->afterDash = s[10];
+	p->dashType = b->dashType <= DASH_SKY ? b->dashType : DASH_AIR;
+	p->windup = s[9];
+	p->airJump = sqrtf(2.0f * g * s[11]) * VEL;   // 0x80048b10
 	p->dashFrames = s[12];
 	p->dashSpeed = 0.1f * s[13] * VEL;
 	p->dashSteer = 0.1f * s[14] * DEG;
@@ -143,15 +155,16 @@ static void moveParams(const BodyStats* b, const LegStats* l, MoveParams* p)
 static const MoveParams fallbackParams = {
 	{ 80, 150, 200, 250, 8, 100, 100, 20, 100, 6, 15, 160, 10, 300, 20 },
 	0.08f, 0.0015f, 20.0f * DEG, 0.02486f, 8, 0.14f, 0.003f, 0.006f, 20, 0.268f, 15,
-	10, 0.3f, 2.0f * DEG, 0.0f, 2, 0.45f,
+	DASH_AIR, 6, 0.0139f, 10, 0.3f, 2.0f * DEG, 0.0f, 2, 0.45f,
 };
 
 enum { ST_GROUND, ST_AIR, ST_DASH, ST_LAND };
 static const char* const stateName[] = { "ground", "air", "air dash", "landing" };
 
-enum { MO_STAND, MO_RUN, MO_JUMP, MO_DASH, MO_LAND, MO_COUNT };
+enum { MO_STAND, MO_RUN, MO_JUMP, MO_DASH, MO_LAND, MO_DOUBLE, MO_COUNT };
 static const char* const motionName[MO_COUNT] = {
 	"sf_normal_ta_kamae", "sf_normal_run", "sf_normal_jump", "sf_jump_dash", "sf_landing",
+	"sf_double_jump",
 };
 
 // The bodies face -Z in their own model space: sf_normal_run leans the chest
@@ -169,8 +182,14 @@ typedef struct {
 	int state, timer;
 	int hold;             // frames the jump may still rise (S+0x13a)
 	int dashesLeft;       // S+0x13b
+	int windup;           // dash wind-up frames still to go (S+0xe2)
 	int pendingLag;       // after-dash lag waiting for the landing (S+0xe4)
 	bool ground;
+	// What the last moves measured, for the bottom screen and the autotest.
+	bool jumping;
+	float takeoffY, peakY, lastJump, topSpeed;
+	float wantYaw;        // where the stick last pointed, in the world
+	int heldFrames, lastHeld, dashesThisJump, lastDashes, lastLag;
 	int motion;           // MO_*
 	float frame;
 	AnimState anim;
@@ -232,8 +251,10 @@ static void robotSpawn(Robot* r, const float* at, float yaw)
 	r->yaw = yaw;
 	r->speed = 0;
 	r->state = ST_AIR;
-	r->timer = r->hold = r->dashesLeft = r->pendingLag = 0;
-	r->ground = false;
+	r->timer = r->hold = r->dashesLeft = r->pendingLag = r->windup = 0;
+	r->ground = r->jumping = false;
+	r->lastJump = r->topSpeed = 0;
+	r->lastHeld = r->lastDashes = r->lastLag = 0;
 	r->motion = -1;
 	r->anim.hasLast = false;
 	setMotion(r, MO_JUMP);
@@ -247,6 +268,13 @@ static void robotStep(Robot* r, const Collision* col, const float move[2], bool 
 	const MoveParams* p = &r->p;
 	float mag = sqrtf(move[0] * move[0] + move[1] * move[1]);
 	if (mag > 1.0f) mag = 1.0f;
+	// The frame the jump is pressed only switches the state: the game's
+	// ground branch sets it and the air branch lifts from the next frame on.
+	// Gravity and the landing test must wait too, or the robot -- still on
+	// the floor -- lands again in the same frame and never leaves it.
+	bool takeoff = false;
+	if (mag > 0.01f)
+		r->wantYaw = atan2f(move[0], move[1]);
 
 	switch (r->state) {
 	case ST_LAND:
@@ -267,12 +295,21 @@ static void robotStep(Robot* r, const Collision* col, const float move[2], bool 
 		r->speed += fabsf(d) < p->runAccel ? d : copysignf(p->runAccel, d);
 		r->vel[0] = sinf(r->yaw) * r->speed;
 		r->vel[2] = cosf(r->yaw) * r->speed;
+		if (r->speed > r->topSpeed)
+			r->topSpeed = r->speed;
 		if (press) {
 			// The run carries into the jump; the lift comes from holding.
+			// The input code at 0x80005928 keeps held buttons at S+0x23e and
+			// new presses (new & ~old) at S+0x242: the jump starts on the
+			// press and rises only while the button stays down.
 			r->state = ST_AIR;
 			r->hold = p->jumpHold;
 			r->dashesLeft = p->dashes;
 			r->speed = 0;
+			r->vel[1] = 0;
+			takeoff = r->jumping = true;
+			r->takeoffY = r->peakY = r->pos[1];
+			r->heldFrames = r->dashesThisJump = 0;
 			setMotion(r, MO_JUMP);
 		}
 		break;
@@ -282,19 +319,24 @@ static void robotStep(Robot* r, const Collision* col, const float move[2], bool 
 			if (held) {
 				r->vel[1] += p->jumpLift;
 				r->hold--;
+				r->heldFrames++;
 			} else {
 				r->hold = 0;
 			}
 		}
 		if (press && r->dashesLeft > 0) {
-			// Air dash: the stick's direction, or the facing without it.
+			// 0x80049924: the direction is the stick's, or the facing without
+			// it, flattened; the velocity is zeroed and the wind-up starts.
 			if (mag > 0.01f)
 				r->yaw = atan2f(move[0], move[1]);
 			r->dashesLeft--;
+			r->dashesThisJump++;
 			r->state = ST_DASH;
+			r->windup = p->windup;
 			r->timer = p->dashFrames;
 			r->hold = 0;
-			setMotion(r, MO_DASH);
+			r->vel[0] = r->vel[1] = r->vel[2] = 0;
+			setMotion(r, p->dashType == DASH_JUMP ? MO_DOUBLE : MO_DASH);
 			break;
 		}
 		// Steer in the air, capped at the air speed.
@@ -312,20 +354,36 @@ static void robotStep(Robot* r, const Collision* col, const float move[2], bool 
 		break;
 	}
 	if (r->state == ST_DASH) {
-		// Flat at the dash speed, pitched up by the body's dash angle, the
-		// stick turning it a little each frame.
-		if (mag > 0.01f)
-			r->yaw = turnToward(r->yaw, atan2f(move[0], move[1]), p->dashSteer);
-		r->vel[0] = sinf(r->yaw) * cosf(p->dashPitch) * p->dashSpeed;
-		r->vel[1] = sinf(p->dashPitch) * p->dashSpeed;
-		r->vel[2] = cosf(r->yaw) * cosf(p->dashPitch) * p->dashSpeed;
-		if (--r->timer <= 0) {
+		// No gravity in any of the three: only the movement action (0) applies
+		// it, and the position update runs for every action.
+		if (r->windup > 0) {
+			r->windup--;                       // hang still
+			r->vel[0] = r->vel[1] = r->vel[2] = 0;
+		} else if (p->dashType == DASH_JUMP) {
+			// 0x80048b10: straight up, fast enough to rise s11, no drift.
+			r->vel[1] = p->airJump;
+			r->state = ST_AIR;
+			r->pendingLag = p->afterDash;
+			setMotion(r, MO_JUMP);
+		} else if (r->timer > 0) {
+			// 0x80048708 (air dash) keeps its line; 0x80048050 (sky dash)
+			// turns toward the stick by up to s14 / 10 degrees a frame. Both
+			// fly at s13 / 10, pitched up by the body's dash angle.
+			if (p->dashType == DASH_SKY && mag > 0.01f)
+				r->yaw = turnToward(r->yaw, atan2f(move[0], move[1]), p->dashSteer);
+			r->vel[0] = sinf(r->yaw) * cosf(p->dashPitch) * p->dashSpeed;
+			r->vel[1] = sinf(p->dashPitch) * p->dashSpeed;
+			r->vel[2] = cosf(r->yaw) * cosf(p->dashPitch) * p->dashSpeed;
+			r->timer--;
+		} else {
+			// The dash ends: back to the movement action with the speed
+			// dropped and the after-dash lag owed on landing.
 			r->state = ST_AIR;
 			r->pendingLag = p->afterDash;
 			setMotion(r, MO_JUMP);
 			r->frame = 1e6f;
 		}
-	} else {
+	} else if (!takeoff) {
 		r->vel[1] -= p->gravity;   // on the ground too: it keeps the floor contact
 	}
 
@@ -356,16 +414,30 @@ static void robotStep(Robot* r, const Collision* col, const float move[2], bool 
 		r->pos[2] = c[2];
 	}
 	bool wasAir = r->state == ST_AIR || r->state == ST_DASH;
-	if (ground && wasAir && fall > 0.0f) {
+	if (wasAir && r->pos[1] > r->peakY)
+		r->peakY = r->pos[1];
+	if (ground && wasAir && !takeoff && fall > 0.0f) {
 		// Landing lag, 0x8004b0a0: s7 frames scaled by how hard the landing
 		// was against a 6-unit fall, plus whatever an air dash left owing.
 		float impact = fall / p->impactSpeed;
 		if (impact > 1.0f) impact = 1.0f;
 		int lag = (int)(p->landLag * impact + r->pendingLag);
+		if (r->jumping) {
+			r->lastJump = r->peakY - r->takeoffY;
+			r->lastHeld = r->heldFrames;
+			r->lastDashes = r->dashesThisJump;
+		}
+		r->jumping = false;
+		r->lastLag = lag;
 		r->pendingLag = 0;
 		r->hold = 0;
 		r->vel[1] = 0;
-		r->speed = 0;
+		// GUESS: the run picks up the horizontal speed the robot lands with,
+		// up to the top speed. Zeroing it stalled a robot perched on an
+		// obstacle's edge, where the floor contact comes and goes each frame.
+		r->speed = sqrtf(r->vel[0] * r->vel[0] + r->vel[2] * r->vel[2]);
+		if (r->speed > p->runSpeed)
+			r->speed = p->runSpeed;
 		if (lag > 0) {
 			r->state = ST_LAND;
 			r->timer = lag;
@@ -420,21 +492,30 @@ static void robotDraw(Robot* r, const Model* parts, const bool* havePart,
 #ifndef AUTOTEST_STEP
 #define AUTOTEST_STEP 10
 #endif
-// A fixed run for the emulator, one arena every 10 s: drop in, run, jump,
-// air dash, run into an obstacle and a wall. Moves are in camera space
+// A fixed run for the emulator that does every movement once per arena, then
+// checks what it measured against the stats (shown on the bottom screen):
+// run to top speed, a full held jump, a short hop, a jump spending every air
+// dash, a 180-degree turn, and a run into a wall. Moves are in camera space
 // (x right, y forward); keys are pressed on the first frame of a cue and
 // held to its end.
 typedef struct { int from, to; float x, y; u32 keys; } Cue;
 static const Cue script[] = {
-	{  60, 150,  0.0f,  1.0f, 0 },        // run forward
-	{ 150, 162,  0.0f,  1.0f, KEY_B },    // full jump: held past the hold window
-	{ 175, 176,  1.0f,  0.0f, KEY_B },    // air dash right
-	{ 240, 360, -1.0f,  0.0f, 0 },        // run left, into whatever is there
-	{ 360, 361, -1.0f,  0.0f, KEY_B },    // tapped jump: a hop
-	{ 385, 386,  0.0f, -1.0f, KEY_B },    // air dash back
-	{ 450, 560,  0.7f, -0.7f, 0 },        // run diagonally to a wall
+	// The run is long: the slowest bodies need 53 frames to top speed, and a
+	// robot that spawns on an obstacle loses some to the landing off it.
+	{  60, 220,  0.0f,  1.0f, 0 },        // run forward to top speed
+	{ 220, 255,  0.0f,  0.0f, KEY_B },    // full jump, held past any hold window
+	{ 340, 342,  0.0f,  0.0f, KEY_B },    // hop: held 2 frames
+	{ 390, 440,  0.0f,  1.0f, 0 },        // run forward...
+	{ 440, 480,  0.0f, -1.0f, 0 },        // ...then turn round and run back
+	{ 490, 560,  0.7f,  0.7f, 0 },        // run diagonally into a wall
+	// Dashes last: a sky dash flies for up to 240 frames and cannot be cut.
+	{ 580, 610,  0.0f,  0.0f, KEY_B },    // jump for the air dashes (pressed below)
+	{ 610, 700,  1.0f,  0.0f, 0 },        // ...dashing right
 };
-#define SCRIPT_FRAMES 600
+#define SCRIPT_FRAMES 960
+// B every 4 frames while dashing, so each dash starts as soon as the last ends.
+#define DASH_FROM 612
+#define DASH_TO 700
 static void scripted(int t, float* x, float* y, u32* down, u32* held)
 {
 	*x = *y = 0;
@@ -446,6 +527,54 @@ static void scripted(int t, float* x, float* y, u32* down, u32* held)
 			*held |= script[i].keys;
 			if (t == script[i].from) *down |= script[i].keys;
 		}
+	if (t >= DASH_FROM && t < DASH_TO && (t - DASH_FROM) % 4 == 0) {
+		*down |= KEY_B;
+		*held |= KEY_B;
+	}
+}
+
+// Readings taken at fixed points of the script, then judged.
+typedef struct {
+	float topSpeed, full, hop, turn, aim;
+	int fullHeld, lag, dashes;
+	bool done, pass;
+	char line[6][40];
+} AutoCheck;
+
+static void autoSample(AutoCheck* c, const Robot* r, int t, float* yawMark)
+{
+	if (t == 220) c->topSpeed = r->topSpeed;
+	if (t == 335) { c->full = r->lastJump; c->fullHeld = r->lastHeld; c->lag = r->lastLag; }
+	if (t == 375) c->hop = r->lastJump;
+	// Most dashes in one jump: once they are spent the script's further
+	// presses land as new hops, which start the count again.
+	if (t >= 580 && r->dashesThisJump > c->dashes) c->dashes = r->dashesThisJump;
+	if (t == 439) *yawMark = r->yaw;
+	// The stick is read relative to a camera that moves, so "reverse" is not
+	// an exact half turn in the world: judge that the robot turned a long way
+	// and ended up facing where the stick points.
+	if (t == 470) {
+		c->turn = fabsf(wrapAngle(r->yaw - *yawMark)) / DEG;
+		c->aim = fabsf(wrapAngle(r->yaw - r->wantYaw)) / DEG;
+	}
+	if (t != SCRIPT_FRAMES - 1)
+		return;
+	const MoveParams* p = &r->p;
+	float want = p->s[3] * VEL;     // the held jump's design height
+	bool run = c->topSpeed >= p->runSpeed * 0.95f;
+	bool full = fabsf(c->full - want) <= want * 0.15f;
+	bool hop = c->hop > 0.0f && c->hop < c->full * 0.8f;
+	bool dash = c->dashes == p->dashes;
+	bool turn = c->turn > 90.0f && c->aim < 10.0f;
+	bool land = c->lag > 0;
+	snprintf(c->line[0], 40, "run  %s top %.3f/%.3f", run ? "ok  " : "FAIL", c->topSpeed, p->runSpeed);
+	snprintf(c->line[1], 40, "jump %s %.2f of %.2f, %df", full ? "ok  " : "FAIL", c->full, want, c->fullHeld);
+	snprintf(c->line[2], 40, "hop  %s %.2f", hop ? "ok  " : "FAIL", c->hop);
+	snprintf(c->line[3], 40, "dash %s %d of %d", dash ? "ok  " : "FAIL", c->dashes, p->dashes);
+	snprintf(c->line[4], 40, "turn %s %.0f deg, %.0f off stick", turn ? "ok  " : "FAIL", c->turn, c->aim);
+	snprintf(c->line[5], 40, "land %s lag %d", land ? "ok  " : "FAIL", c->lag);
+	c->pass = run && full && hop && dash && turn && land;
+	c->done = true;
 }
 #endif
 
@@ -476,13 +605,15 @@ static bool stageLoad(Stage* s, int index, char* err, size_t errSize)
 		snprintf(err, errSize, "no collision %03d", index);
 		return false;
 	}
-	// Start on opposite sides of the floor, dropping in from above it.
+	// Start on opposite sides of the floor, dropping in from above the highest
+	// surface anyone can stand on: the shell's own floor can be a pit below
+	// the stage (arena 24's is 10 units down), which spawned robots under it.
 	const Collision* c = &s->col;
 	bool floor = c->lo[0] < c->hi[0];
 	float cx = floor ? (c->lo[0] + c->hi[0]) * 0.5f : c->blocks[0].centre[0];
 	float cz = floor ? (c->lo[2] + c->hi[2]) * 0.5f : c->blocks[0].centre[2];
 	float ext = floor ? (c->hi[2] - c->lo[2]) * 0.3f : 4.0f;
-	float top = floor ? c->hi[1] + 4.0f : c->blocks[0].centre[1];
+	float top = c->top > -1e8f ? c->top + 4.0f : c->blocks[0].centre[1];
 	for (int k = 0; k < 2; k++) {
 		s->spawn[k][0] = cx;
 		s->spawn[k][1] = top;
@@ -540,7 +671,22 @@ void battleRun(C3D_RenderTarget* top, const MotionSet* set, const BattleRoster* 
 	int meterFrames = 0, meterSteps = 0;
 	float fps = 0.0f, speed = 0.0f;
 #ifdef AUTOTEST
-	int autoFrame = 0;
+	int autoFrame = 0, autoRuns = 0, autoPasses = 0;
+	AutoCheck check, lastCheck;
+	memset(&check, 0, sizeof check);
+	memset(&lastCheck, 0, sizeof lastCheck);
+	float yawMark = 0;
+	FILE* log = fopen("sdmc:/cr_autotest.log", "w");
+	// make AUTOBODY= / AUTOLEG= / AUTOARENA=: one robot, or one arena only.
+#ifdef AUTOTEST_BODY
+	body = AUTOTEST_BODY % bodies;
+#endif
+#ifdef AUTOTEST_LEG
+	partIndex[PART_LEG] = AUTOTEST_LEG;
+#endif
+#ifdef AUTOTEST_ARENA
+	arena = AUTOTEST_ARENA % roster->arenas;
+#endif
 #endif
 
 	while (aptMainLoop()) {
@@ -553,14 +699,41 @@ void battleRun(C3D_RenderTarget* top, const MotionSet* set, const BattleRoster* 
 #ifdef AUTOTEST
 		if (autoFrame == SCRIPT_FRAMES) {
 			autoFrame = 0;
-			if (arena + AUTOTEST_STEP >= roster->arenas)
+			autoRuns++;
+			autoPasses += check.pass;
+			lastCheck = check;
+			memset(&check, 0, sizeof check);
+#ifdef AUTOTEST_ARENA
+			bool last = true;
+#else
+			bool last = arena + AUTOTEST_STEP >= roster->arenas;
+#endif
+			if (last) {
+				consoleClear();
+				printf("Last arena (%d):\n", arena + 1);
+				for (int k = 0; k < 6; k++) puts(lastCheck.line[k]);
+				printf("AUTOTEST DONE: %d of %d arenas passed%s", autoPasses, autoRuns, "\n");
+				if (log) {
+					// The test script closes Citra once it sees this line.
+					fprintf(log, "# DONE %d of %d arenas passed\n", autoPasses, autoRuns);
+					fflush(log);
+				}
+				for (int k = 0; k < 120 && aptMainLoop(); k++)
+					gspWaitForVBlank();
 				break;
+			}
 			arena += AUTOTEST_STEP;
+#ifndef AUTOTEST_BODY
 			body = (body + 7) % bodies;
+#endif
 			for (int k = 0; k < PART_COUNT; k++) partIndex[k] += 3;
+#ifdef AUTOTEST_LEG
+			partIndex[PART_LEG] = AUTOTEST_LEG;
+#endif
 			reloadStage = reloadRobots = true;
 		}
-		scripted(autoFrame++, &sx, &sy, &down, &held);
+		int scriptT = autoFrame++;
+		scripted(scriptT, &sx, &sy, &down, &held);
 #endif
 		if (down & KEY_START)
 			break;
@@ -643,6 +816,18 @@ void battleRun(C3D_RenderTarget* top, const MotionSet* set, const BattleRoster* 
 			for (int k2 = 0; k2 < 2; k2++)
 				robotAnimate(&robots[k2], &mo);
 			meterSteps++;
+#ifdef AUTOTEST
+			autoSample(&check, me, scriptT, &yawMark);
+			if (log && scriptT == SCRIPT_FRAMES - 1) {
+				fprintf(log, "# arena %d body %d leg %d %s\n", arena, body, partIndex[PART_LEG],
+					check.pass ? "PASS" : "FAIL");
+				for (int k = 0; k < 6; k++)
+					fprintf(log, "#   %s\n", check.line[k]);
+			}
+			if (log)
+				fprintf(log, "%d %d %d %.4f %.3f %.3f %.3f %.4f %.4f %.4f %d %d\n", arena, scriptT, me->state, me->speed,
+					me->pos[0], me->pos[1], me->pos[2], me->vel[0], me->vel[1], me->vel[2], me->dashesLeft, me->timer);
+#endif
 		}
 
 		u64 now = osGetTime();
@@ -669,10 +854,26 @@ void battleRun(C3D_RenderTarget* top, const MotionSet* set, const BattleRoster* 
 				printf("motion %s\n", me->motion >= 0 ? motionName[me->motion] : "-");
 				const int* st = me->p.s;
 				printf("run %d/%d turn %d  jump %d/%d  g %d\n", st[0], st[1], st[2], st[3], st[4], st[8]);
-				printf("air %d/%d  dash %dx %d@%d  lag %d\n", st[5], st[6], me->p.dashes, st[12], st[13], st[7]);
+				printf("air %d/%d  %s %dx  lag %d\n", st[5], st[6], dashTypeName[me->p.dashType], me->p.dashes, st[7]);
+				if (me->p.dashType == DASH_JUMP)
+					printf("  wind-up %d  height %d\n", st[9], st[11]);
+				else
+					printf("  wind-up %d  %d frames at %d\n", st[9], st[12], st[13]);
+				printf("last jump %.2f held %df  dashes %d  lag %d\n", me->lastJump, me->lastHeld, me->lastDashes, me->lastLag);
 			}
+#ifdef AUTOTEST
+			{
+				const AutoCheck* c = check.done ? &check : &lastCheck;
+				printf("\nAUTOTEST %s  (%d of %d arenas passed)\n",
+					!c->done ? "running" : c->pass ? "PASS" : "FAIL",
+					autoPasses + (check.done && check.pass), autoRuns + check.done);
+				if (c->done)
+					for (int k = 0; k < 6; k++) printf("%s\n", c->line[k]);
+			}
+#endif
 			printf("\n%4.1f fps   game speed %3.0f%%\n", fps, speed * 100.0f);
 			printf("CPU %5.2f ms   GPU %5.2f ms\n", C3D_GetProcessingTime(), C3D_GetDrawingTime());
+#ifndef AUTOTEST  // the bottom screen holds 30 rows: the results need the room
 			printf("\nCircle pad   run\n");
 			printf("B            jump (hold: higher)\n");
 			printf("B in the air air dash\n");
@@ -680,6 +881,7 @@ void battleRun(C3D_RenderTarget* top, const MotionSet* set, const BattleRoster* 
 			printf("D-pad ^ v    robot body\n");
 			printf("SELECT       next parts and leg\n");
 			printf("START        model viewer\n");
+#endif
 		}
 
 		C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
@@ -703,6 +905,10 @@ void battleRun(C3D_RenderTarget* top, const MotionSet* set, const BattleRoster* 
 	}
 
 	C3D_FrameSync();
+#ifdef AUTOTEST
+	if (log)
+		fclose(log);
+#endif
 	for (int k = 0; k < 2; k++)
 		robotFree(&robots[k]);
 	for (int k = 0; k < PART_COUNT; k++)

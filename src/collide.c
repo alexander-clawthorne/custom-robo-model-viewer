@@ -26,6 +26,7 @@ bool collisionLoad(Collision* c, const char* path)
 	c->blocks = calloc(count, sizeof(ColBlock));
 	c->blockCount = count;
 	for (int a = 0; a < 3; a++) { c->lo[a] = 1e9f; c->hi[a] = -1e9f; }
+	c->top = -1e9f;
 	bool ok = true;
 	for (u32 i = 0; i < count && ok; i++) {
 		ColBlock* b = &c->blocks[i];
@@ -47,6 +48,9 @@ bool collisionLoad(Collision* c, const char* path)
 			memcpy(fc->v, buf, b->nverts * 12);
 			memcpy(fc->n, buf + b->nverts * 3, 12);
 			fc->d = buf[b->nverts * 3 + 3];
+			if (fc->n[1] > FLOOR_NY && !(b->flags & 0x80))
+				for (u32 j = 0; j < b->nverts; j++)
+					if (fc->v[j][1] > c->top) c->top = fc->v[j][1];
 			if (i == 0 && fc->n[1] > FLOOR_NY)
 				for (u32 j = 0; j < b->nverts; j++)
 					for (int a = 0; a < 3; a++) {
