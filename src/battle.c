@@ -11,9 +11,20 @@
 #include <stdlib.h>
 #include <string.h>
 #include "collide.h"
+#include "effects.h"
 #include "model.h"
 #include "render.h"
 #include "weapon.h"
+
+static Model    sGunfxModel;
+static EfxSet   sGunfxSet;
+static bool     sGunfxReady;
+
+static void onGunFire(const float* pos)
+{
+	if (sGunfxReady)
+		efxSpawn(&sGunfxSet, 22, &sGunfxModel, pos);
+}
 
 #define CLEAR_COLOR 0x202830FF
 #define PI 3.14159265f
@@ -1368,6 +1379,13 @@ void battleRun(C3D_RenderTarget* top, const MotionSet* set, const BattleRoster* 
 
 	ArenaBounds bounds = { { 0, 0 }, 1e6f };
 	weaponDrawInit();
+	sGunfxReady = false;
+	char gfxErr[96];
+	if (modelLoad(&sGunfxModel, "romfs:/gunfx/022.crm", gfxErr, sizeof gfxErr) &&
+	    efxSetLoad(&sGunfxSet, "romfs:/gunfx/anim.efx")) {
+		sGunfxReady = true;
+		weaponSetGunFireCb(onGunFire);
+	}
 	PartStats stats;
 	bool haveStats = statsLoad(&stats, "romfs:/stats/parts.bin");
 	int bodies = roster->bodies / 5;
@@ -1627,6 +1645,7 @@ void battleRun(C3D_RenderTarget* top, const MotionSet* set, const BattleRoster* 
 			for (int k2 = 0; k2 < 2; k2++)
 				arsenalStep(&robots[k2].arms, &robots[k2].fig, &robots[1 - k2].fig, &robots[1 - k2].hit,
 					&stage.col, &bounds);
+			efxStepAll();
 			meterSteps++;
 #ifdef AUTOTEST
 			autoSample(&check, me, foe, scriptT, &yawMark);
@@ -1731,6 +1750,7 @@ void battleRun(C3D_RenderTarget* top, const MotionSet* set, const BattleRoster* 
 				robotDraw(&robots[k], parts, havePart, &projection, &view);
 			for (int k = 0; k < 2; k++)
 				arsenalDraw(&robots[k].arms, &projection, &view);
+			efxDrawAll(&projection, &view);
 		}
 		C3D_FrameEnd(0);
 		meterFrames++;
@@ -1747,6 +1767,12 @@ void battleRun(C3D_RenderTarget* top, const MotionSet* set, const BattleRoster* 
 		if (havePart[k]) modelFree(&parts[k]);
 	stageFree(&stage);
 	statsFree(&stats);
+	weaponSetGunFireCb(NULL);
+	if (sGunfxReady) {
+		efxSetFree(&sGunfxSet);
+		modelFree(&sGunfxModel);
+		sGunfxReady = false;
+	}
 	weaponDrawFini();
 	consoleClear();
 }

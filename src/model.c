@@ -37,12 +37,14 @@ bool modelLoad(Model* m, const char* path, char* err, size_t errSize)
 	const u8* end = file + size;
 	u32 header[2];
 	NEED(28);
-	if (memcmp(at, "CRM1", 4) != 0 && memcmp(at, "CRM2", 4) != 0 && memcmp(at, "CRM3", 4) != 0) {
+	if (memcmp(at, "CRM1", 4) != 0 && memcmp(at, "CRM2", 4) != 0 &&
+	    memcmp(at, "CRM3", 4) != 0 && memcmp(at, "CRM4", 4) != 0) {
 		snprintf(err, errSize, "not a CRM file");
 		goto fail;
 	}
 	m->skinned = at[3] == '2';
 	m->isPart = at[3] == '3';
+	bool isEffect = at[3] == '4';
 	memcpy(header, at + 4, 8);
 	memcpy(m->centre, at + 12, 12);
 	memcpy(&m->radius, at + 24, 4);
@@ -101,8 +103,25 @@ bool modelLoad(Model* m, const char* path, char* err, size_t errSize)
 			if (m->slots[r] < 0 || (u32)m->slots[r] >= m->jointCount)
 				m->hasRig = false;
 	}
-	// Skinned and part batches both carry an extra s32 before the count.
-	const size_t head = (m->skinned || m->isPart) ? 16 : 12;
+	if (isEffect) {
+		// CRM4 joint block: u32 count, per joint s16 parent, u16 pad, f32 rot[3], scale[3], trans[3]
+		NEED(4);
+		memcpy(&m->jointCount, at, 4);
+		at += 4;
+		m->joints = calloc(m->jointCount ? m->jointCount : 1, sizeof(ModelJoint));
+		for (u32 i = 0; i < m->jointCount; i++) {
+			NEED(40);
+			ModelJoint* j = &m->joints[i];
+			memcpy(&j->parent, at, 2);
+			j->ik = 0;
+			memcpy(j->rot,   at + 4,  12);
+			memcpy(j->scale, at + 16, 12);
+			memcpy(j->trans, at + 28, 12);
+			at += 40;
+		}
+	}
+	// Skinned, part, and effect batches all carry an extra s32 before the count.
+	const size_t head = (m->skinned || m->isPart || isEffect) ? 16 : 12;
 
 	// First pass: count vertices; second: copy into one linear VBO.
 	const u8* batchStart = at;
@@ -141,6 +160,8 @@ bool modelLoad(Model* m, const char* path, char* err, size_t errSize)
 			memcpy(&b->joint, at + 8, 4);
 		if (m->isPart)
 			memcpy(&b->root, at + 8, 4);
+		if (isEffect)
+			memcpy(&b->joint, at + 8, 4);
 		at += head;
 		b->first = first;
 		memcpy(m->vbo + first, at, b->count * sizeof(ModelVertex));

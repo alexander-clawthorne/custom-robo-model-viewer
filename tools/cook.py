@@ -87,6 +87,7 @@ SKINNED = {'chara', 'snrchara'}  # both carry the 19-slot rig and 32 dimensions
 def cook(archive, index):
     skinned = archive in SKINNED
     part = archive in PART_ARCHIVES
+    effect = archive in EFFECT_ARCHIVES
     d, joints, meshes = load_model(archive, index)
     if not any(mesh['tris'] for mesh in meshes):
         return None, {'skipped': 'no triangles'}   # effect emitters are joints only
@@ -118,7 +119,7 @@ def cook(archive, index):
             flags |= BLEND | NO_ZWRITE
         elif ti >= 0:
             flags |= ALPHA_TEST
-        def vertex(v, skinned):
+        def vertex(v, use_local):
             c = v['clr'] if mode & 0x2 else (1.0, 1.0, 1.0, 1.0)
             if ti < 0 and not mode & 0x2:
                 c = tuple(x / 255 for x in diffuse[:3]) + (1.0,)
@@ -129,8 +130,13 @@ def cook(archive, index):
             u, t = v['uv']
             if ti >= 0:
                 u, t = u * rs, t * rt
-            pos, nrm = (v['lpos'], v['lnrm']) if skinned else (v['pos'], v['nrm'])
+            pos, nrm = (v['lpos'], v['lnrm']) if use_local else (v['pos'], v['nrm'])
             return struct.pack('<8f4B', *pos, u, 1.0 - t, *nrm, *rgba)
+        if effect:
+            # CRM4: joint-local vertices, one batch per mesh, joint index from mesh
+            verts = b''.join(vertex(v, True) for tri in mesh['tris'] for v in tri)
+            batches.append((ti, flags, len(mesh['tris']) * 3, verts, mesh['joint'], b'', mesh['model']))
+            continue
         if not skinned:
             verts = b''.join(vertex(v, False) for tri in mesh['tris'] for v in tri)
             batches.append((ti, flags, len(mesh['tris']) * 3, verts, -1, b'', mesh['model']))
@@ -163,17 +169,24 @@ def cook(archive, index):
         pts = near if len(near) else pts
     centre = (pts.min(0) + pts.max(0)) / 2
     radius = float(np.linalg.norm(pts - centre, axis=1).max())
-    magic = b'CRM2' if skinned else b'CRM3' if part else b'CRM1'
+    magic = b'CRM2' if skinned else b'CRM3' if part else b'CRM4' if effect else b'CRM1'
     out = bytearray(magic + struct.pack('<II4f', len(textures), len(batches), *centre, radius))
     for (w, h, fmt, pixels), wrap in textures:
         out += struct.pack('<HHBBBBI', w, h, fmt, WRAP.get(wrap[0], 2), WRAP.get(wrap[1], 2), 0, len(pixels)) + pixels
     if skinned:
         out += skeleton_block(archive, index, joints)
+    if effect:
+        # CRM4 joint block: u32 count, per joint s16 parent + u16 pad + f32 rot[3] + scale[3] + trans[3]
+        out += struct.pack('<I', len(joints))
+        for j in joints:
+            out += struct.pack('<hH9f', j.parent, 0, *j.rot, *j.scale, *j.trans)
     for ti, flags, count, verts, joint, weights, root in batches:
         if skinned:
             out += struct.pack('<iIiI', ti, flags, joint, count) + verts + weights
         elif part:
             out += struct.pack('<iIiI', ti, flags, root, count) + verts
+        elif effect:
+            out += struct.pack('<iIiI', ti, flags, joint, count) + verts
         else:
             out += struct.pack('<iII', ti, flags, count) + verts
     tris = sum(b[2] for b in batches) // 3

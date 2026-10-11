@@ -200,3 +200,6 @@ int arsenalLive(const Arsenal* a);   // shots, bombs, pods and blasts in the air
 void weaponDrawInit(void);
 void weaponDrawFini(void);
 void arsenalDraw(const Arsenal* a, const C3D_Mtx* projection, const C3D_Mtx* view);
+
+// Optional callback fired when a gun shoots: pos is the muzzle world position.
+void weaponSetGunFireCb(void (*cb)(const float* pos));

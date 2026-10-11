@@ -110,6 +110,10 @@ void gunInterrupt(Arsenal* a, bool deleteShots)
 		for (int i = 0; i < MAX_BULLETS; i++) a->bullets[i].state = 0;
 }
 
+static void (*sGunFireCb)(const float* pos);
+
+void weaponSetGunFireCb(void (*cb)(const float* pos)) { sGunFireCb = cb; }
+
 static void fireVolley(Arsenal* a, const GunPattern* P, const Fighter* me, const Fighter* foe, const Collision* col)
 {
 	int slots = a->gun->slots < MAX_BULLETS ? a->gun->slots : MAX_BULLETS;
@@ -134,6 +138,7 @@ static void fireVolley(Arsenal* a, const GunPattern* P, const Fighter* me, const
 		memcpy(b->dir, dir, sizeof b->dir);
 		memcpy(b->trail[0], b->pos, sizeof b->pos);
 		a->fired++;
+		if (n == 0 && sGunFireCb) sGunFireCb(me->gunAt);
 		// A muzzle inside a wall: the bullet ends where the wall is.
 		float hit[3], nrm[3];
 		if (collideSegment(col, me->hips, b->pos, hit, nrm)) {
