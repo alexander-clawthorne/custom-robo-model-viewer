@@ -158,5 +158,15 @@ def load_model(archive, index=0):
         j, m = hsd.read_meshes(d, root, mount=archive not in PART_ARCHIVES)
         for mesh in m:
             mesh['model'] = model
+        if archive in EFFECT_ARCHIVES:
+            # Effects have several ModelSets cooked into one CRM4 joint list:
+            # walk_joints numbers each tree from 0, so shift to global indices.
+            base = len(joints)
+            for jj in j:
+                jj.index += base
+                if jj.parent >= 0:
+                    jj.parent += base
+            for mesh in m:
+                mesh['joint'] += base
         joints += j; meshes += m
     return d, joints, meshes

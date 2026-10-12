@@ -220,6 +220,16 @@ int efxSpawn(EfxSet* set, int modelIndex, Model* model, const float pos[3])
 	return -1;
 }
 
+// Ends every live effect; call before freeing a model or set they use.
+void efxClearAll(void)
+{
+	for (int i = 0; i < EFX_POOL; i++) {
+		free(pool[i].world);
+		pool[i].world  = NULL;
+		pool[i].active = false;
+	}
+}
+
 void efxStepAll(void)
 {
 	for (int i = 0; i < EFX_POOL; i++) {

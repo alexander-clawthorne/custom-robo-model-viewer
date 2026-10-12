@@ -50,6 +50,9 @@ void efxSetFree(EfxSet* s);
 // Returns a slot index, or -1 if the pool is full.
 int efxSpawn(EfxSet* set, int modelIndex, Model* model, const float pos[3]);
 
+// End every active instance (before freeing a model or set they use).
+void efxClearAll(void);
+
 // Advance all active instances by one frame.
 void efxStepAll(void);
 

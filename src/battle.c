@@ -18,12 +18,32 @@
 
 static Model    sGunfxModel;
 static EfxSet   sGunfxSet;
-static bool     sGunfxReady;
+static bool     sGunfxSetReady;
+static int      sGunfxIndex = -1;   // gunfx index of sGunfxModel, -1 = none loaded
 
 static void onGunFire(const float* pos)
 {
-	if (sGunfxReady)
-		efxSpawn(&sGunfxSet, 22, &sGunfxModel, pos);
+	if (sGunfxSetReady && sGunfxIndex >= 0)
+		efxSpawn(&sGunfxSet, sGunfxIndex, &sGunfxModel, pos);
+}
+
+// The battle loader 0x80075950 loads gun_effect.BIN entry = gun id
+// (lhz 4 of the slot's loadout at 0x801c5bd0), so a gun's effects are
+// gunfx 2*id (sub-archive 0, projectile) and 2*id+1 (burst).
+static void gunfxSelect(int gun)
+{
+	int index = 2 * gun;
+	if (index == sGunfxIndex)
+		return;
+	if (sGunfxIndex >= 0) {
+		efxClearAll();
+		modelFree(&sGunfxModel);
+	}
+	sGunfxIndex = -1;
+	char path[40], err[96];
+	snprintf(path, sizeof path, "romfs:/gunfx/%03d.crm", index);
+	if (modelLoad(&sGunfxModel, path, err, sizeof err))
+		sGunfxIndex = index;
 }
 
 #define CLEAR_COLOR 0x202830FF
@@ -1379,13 +1399,9 @@ void battleRun(C3D_RenderTarget* top, const MotionSet* set, const BattleRoster* 
 
 	ArenaBounds bounds = { { 0, 0 }, 1e6f };
 	weaponDrawInit();
-	sGunfxReady = false;
-	char gfxErr[96];
-	if (modelLoad(&sGunfxModel, "romfs:/gunfx/022.crm", gfxErr, sizeof gfxErr) &&
-	    efxSetLoad(&sGunfxSet, "romfs:/gunfx/anim.efx")) {
-		sGunfxReady = true;
+	sGunfxSetReady = efxSetLoad(&sGunfxSet, "romfs:/gunfx/anim.efx");
+	if (sGunfxSetReady)
 		weaponSetGunFireCb(onGunFire);
-	}
 	PartStats stats;
 	bool haveStats = statsLoad(&stats, "romfs:/stats/parts.bin");
 	int bodies = roster->bodies / 5;
@@ -1515,6 +1531,7 @@ void battleRun(C3D_RenderTarget* top, const MotionSet* set, const BattleRoster* 
 						// Both robots carry the parts on show: the models and
 						// the stat tables share an order.
 						r->arms.gun = &stats.gun[partIndex[PART_GUN] % stats.guns];
+						gunfxSelect(partIndex[PART_GUN] % stats.guns);
 						r->arms.bomb = &stats.bomb[partIndex[PART_BOMB] % stats.bombs];
 						r->arms.pod = &stats.pod[partIndex[PART_POD] % stats.pods];
 						r->moTackle = set ? motionFind(set, stats.body[b].tackleMotion) : -1;
@@ -1768,10 +1785,14 @@ void battleRun(C3D_RenderTarget* top, const MotionSet* set, const BattleRoster* 
 	stageFree(&stage);
 	statsFree(&stats);
 	weaponSetGunFireCb(NULL);
-	if (sGunfxReady) {
+	efxClearAll();
+	if (sGunfxSetReady) {
 		efxSetFree(&sGunfxSet);
+		sGunfxSetReady = false;
+	}
+	if (sGunfxIndex >= 0) {
 		modelFree(&sGunfxModel);
-		sGunfxReady = false;
+		sGunfxIndex = -1;
 	}
 	weaponDrawFini();
 	consoleClear();

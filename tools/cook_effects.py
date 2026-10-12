@@ -113,28 +113,9 @@ def cook_anim_v2(archive, index):
     d_hsd, joints, _meshes = load_model(archive, index)
     d = scenes(archive, index)
 
-    # Build offset -> joint_index map from the HSD JObj tree
-    by_off = {}
-    try:
-        jobj_root = list(d_hsd.roots.values())[0]
-    except (IndexError, AttributeError):
-        jobj_root = None
-
-    if jobj_root is not None:
-        # walk_joints DFS: same order as joints list
-        def walk_jobj(off, idx_counter=[0]):
-            if off is None:
-                return
-            by_off[off] = idx_counter[0]
-            idx_counter[0] += 1
-            child = d_hsd.ptr(off + 0x08)
-            walk_jobj(child, idx_counter)
-            nxt = d_hsd.ptr(off + 0x0C)
-            walk_jobj(nxt, idx_counter)
-        try:
-            walk_jobj(jobj_root)
-        except Exception:
-            pass
+    # JObj offset -> CRM4 joint index. load_model numbers the joints of
+    # every ModelSet in one list, the same list cook.py writes.
+    by_off = {j.off: j.index for j in joints}
 
     duration = 0.0
     joint_blobs = []
@@ -171,9 +152,7 @@ def cook_anim_v2(archive, index):
                 jobj_next = d_hsd.ptr(jobj_off + 0x0C)
                 visit_anim(aj_next, jobj_next)
 
-            # Find the first JObj root that corresponds to this model set
-            jobj_ms_root = list(d_hsd.roots.values())[0] if d_hsd.roots else None
-            visit_anim(root, jobj_ms_root)
+            visit_anim(root, d_hsd.ptr(ms))  # ModelSet slot 0 is its JObj
 
         # Material alpha
         for root in anim_roots(d, ms, MAT_ANIM_JOINT):
