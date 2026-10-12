@@ -35,8 +35,17 @@ records); nothing in the block header distinguishes them, so the stride is
 taken from the gap between a block's data and the next block's header.
 Blocks are padded to 16 bytes.
 
-`kind` reaches the hit record and callers test bit 0x40 on it; the 0x100 -
-0x800 values look like a surface class, but no reader for them was found.
+`kind` reaches the hit record via the floor query 0x8006207c. The movement
+code (0x8004b0a0) reads three fields of it:
+  (kind >> 16) & 0xff  floor row, 0x8005d068: six (threshold, slide step,
+                       grip) rows at 0x801c6c1c; only 0x30300 (arenas 12,
+                       16) is not row 0 -- row 3, a slippery floor
+  kind >> 3 == 1       lava (0x8; arenas 2, 4, 8, 20, 23, 30, 38, 39): a
+                       grounded robot writes itself a kind-5 hit, action 15
+  low byte 0x18-0x1c   conveyor, 0x8005cf0c: one of five vectors at
+                       0x801c0a28 (z -2.2, -2.2, 2.2, 6, -6, velocity units)
+                       added to the move (arenas 4, 18, 30)
+0x40 and 0x100 - 0x800, 0x1500 have no reader in the movement code.
 
 Block 0 is the arena shell: four inward walls and a floor, no ceiling. The
 rest are obstacles, each tied to root joint i of the arena scene, so a block

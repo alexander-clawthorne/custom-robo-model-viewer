@@ -39,3 +39,7 @@ bool collideSegment(const Collision* c, const float a[3], const float b[3], floa
 
 // Height of the highest floor face at or below y under (x, z), or -1e9.
 float floorBelow(const Collision* c, float x, float y, float z);
+
+// The same, also giving that face's kind word (0 if there is none), as the
+// game's floor query 0x8006207c copies it into the hit record.
+float floorKindBelow(const Collision* c, float x, float y, float z, u32* kind);

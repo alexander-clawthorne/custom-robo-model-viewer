@@ -215,10 +215,11 @@ static const char* const stateName[] = { "ground", "air", "air dash", "landing",
 	"tackle", "stagger", "down", "rebirth", "win" };
 
 // MO_TACKLE and MO_WIN are each body's own clips (BodyStats).
-enum { MO_STAND, MO_RUN, MO_JUMP, MO_DASH, MO_LAND, MO_DOUBLE, MO_REBIRTH, MO_TACKLE, MO_WIN, MO_COUNT };
+enum { MO_STAND, MO_RUN, MO_JUMP, MO_DASH, MO_LAND, MO_DOUBLE, MO_REBIRTH, MO_TACKLE, MO_WIN, MO_MAGMA,
+	MO_COUNT };
 static const char* const motionName[MO_COUNT] = {
 	"sf_normal_ta_kamae", "sf_normal_run", "sf_normal_jump", "sf_jump_dash", "sf_landing",
-	"sf_double_jump", "sf_powerup", "tackle", "win",
+	"sf_double_jump", "sf_powerup", "tackle", "win", "sf_fall_magma",
 };
 
 // The bodies face -Z in their own model space: sf_normal_run leans the chest
@@ -240,6 +241,9 @@ typedef struct {
 	bool sliding;         // skidding on the ground (S+0x139 == 1)
 	int pendingLag;       // after-dash lag waiting for the landing (S+0xe4)
 	bool ground;
+	u32 floorKind;        // kind word of the face underfoot (S+0x33498), 0 in the air
+	bool magma;           // ST_DOWN is action 15, thrown up by lava, not 14
+	int lavaTouches;      // for the autotest
 	// What the last moves measured, for the bottom screen and the autotest.
 	bool jumping;
 	float takeoffY, peakY, lastJump, topSpeed;
@@ -330,7 +334,9 @@ static void robotSpawn(Robot* r, const float* at, float yaw)
 	r->speed = 0;
 	r->state = ST_AIR;
 	r->timer = r->hold = r->dashesLeft = r->pendingLag = r->windup = 0;
-	r->ground = r->jumping = false;
+	r->ground = r->jumping = r->magma = false;
+	r->floorKind = 0;
+	r->lavaTouches = 0;
 	r->lastJump = r->topSpeed = 0;
 	r->lastHeld = r->lastDashes = r->lastLag = r->lastJumpLag = 0;
 	r->motion = -1;
@@ -347,6 +353,9 @@ static void robotSpawn(Robot* r, const float* at, float yaw)
 	memset(&r->hit, 0, sizeof r->hit);
 	arsenalReset(&r->arms, r->arms.gun, r->arms.bomb, r->arms.pod);
 }
+
+#define LAVA_DAMAGE 100
+#define LAVA_DOWN 50
 
 // A hit, as 0x8004b0a0 reads S+0x18a0 the frame after: HP falls by the
 // damage x body 0x42 / 90 (and by the body's 0x47+kind % of that if already
@@ -372,8 +381,8 @@ static void robotHurt(Robot* r, const Robot* foe)
 	float dmg = h->damage;
 	if (wasDown)
 		dmg *= B[0x47 + h->kind - 0x42] * 0.01f;
-	// HP only falls while the attacker is still standing.
-	if (foe->hp >= 1)
+	// HP only falls while the attacker is still standing (lava has none).
+	if (foe->hp >= 1 || h->kind == HIT_MAGMA)
 		r->hp -= dmg * B[0] / 90.0f;
 	if (r->hp < 0) r->hp = 0;
 	if (h->snap)
@@ -394,6 +403,11 @@ static void robotHurt(Robot* r, const Robot* foe)
 			r->knockdowns++;
 			r->timer = B[0x46 - 0x42];
 		}
+		// Lava makes it action 15 instead, and reloads its own 50 frames (the
+		// s16 at 0x801c6c18) even when already down.
+		r->magma = h->kind == HIT_MAGMA;
+		if (r->magma)
+			r->timer = LAVA_DOWN;
 		if (r->hp < 1)
 			r->timer = 255;
 		speed = q->launch * B[1] / 1000.0f * VEL;
@@ -414,29 +428,71 @@ static void robotHurt(Robot* r, const Robot* foe)
 	r->jumping = false;
 	gunInterrupt(&r->arms, knock && h->kind == HIT_GUN);
 	bombCancel(&r->arms);
-	setMotion(r, knock ? MO_JUMP : MO_LAND);
+	setMotion(r, r->magma ? MO_MAGMA : knock ? MO_JUMP : MO_LAND);
 	memset(h, 0, sizeof *h);
+}
+
+// Lava, 0x8004b0a0 after the position update (0x8004cd64): a robot standing
+// on a face whose kind >> 3 is 1 (kind 0x8; arenas 2, 4, 8, 20, 23, 30, 38,
+// 39) and not KO'd writes itself a hit of kind 5: 100 damage, a full down
+// gauge, launched straight up at 250 (the s16s at 0x801c6c1a, 0x801c6c16).
+// It goes the normal hit path next frame, where invulnerability can still
+// turn it away, as action 15 (0x80045ce8), and fires again every frame it is
+// still on the lava. Action 15 falls by the plain 0.6 of r13-0x4f0c, not by
+// the record's gravity (the 50 at 0x801c6c18 is its down time instead), so
+// the launch's gravity here is 100%.
+static bool sLavaOn = true;   // the autotest keeps it off until its lava phase
+
+static void lavaCheck(Robot* r)
+{
+	if (!sLavaOn || !r->ground || r->floorKind >> 3 != 1 || r->invuln > 0 || r->hp < 1)
+		return;
+	Hit* h = &r->hit;
+	h->any = true;
+	h->kind = HIT_MAGMA;
+	h->damage += LAVA_DAMAGE;
+	h->down = -1;
+	memset(&h->last, 0, sizeof h->last);
+	h->last.damage = LAVA_DAMAGE;
+	h->last.down = -1;
+	h->last.launch = 250;
+	h->last.launchAngle = 90;
+	h->last.launchGravity = 100;
+	h->dir[0] = sinf(r->yaw);
+	h->dir[1] = 0;
+	h->dir[2] = cosf(r->yaw);
+	r->lavaTouches++;
 }
 
 // Ground velocity, 0x8004b0a0: the robot wants its facing times its run
 // speed, times the floor's grip. Within a threshold of its current velocity
 // it simply takes it; beyond, it slides, changing by a fixed step a frame --
 // which is the skid after landing from a moving jump, and the ice of some
-// floors. Values per surface kind from 0x801c6c1c: (threshold 0.02 x, step
-// 0.002 x, grip 0.01 x); every ordinary floor is (100, 100, 100).
-// GUESS: every face is treated as kind 0, the surface kind is not read.
+// floors. The row is (face kind >> 16) & 0xff (0x8005d068), into six rows of
+// (threshold 0.02 x, step 0.002 x, grip 0.01 x) at 0x801c6c1c. Every
+// ordinary floor is row 0, (100, 100, 100); the only other row the arenas
+// use is 3, kind 0x30300 (arenas 12 and 16), a slippery floor.
+// GUESS: the grip scales the wanted velocity; how it is applied was not traced.
+static const s16 floorRow[6][3] = {
+	{ 100, 100, 100 }, { 50, 70, 85 }, { 70, 70, 90 }, { 35, 10, 100 }, { 30, 90, 10 }, { 60, 10, 150 },
+};
+// Row 0, for the autotest's skid check.
 #define SLIP_THRESHOLD (2.0f * VEL)
 #define SLIDE_STEP (0.2f * VEL)
 
 static void groundVelocity(Robot* r)
 {
-	float want[2] = { sinf(r->yaw) * r->speed, cosf(r->yaw) * r->speed };
+	u32 row = r->floorKind >> 16 & 0xff;
+	const s16* f = floorRow[row < 6 ? row : 0];
+	float grip = 0.01f * f[2];
+	float want[2] = { sinf(r->yaw) * r->speed * grip, cosf(r->yaw) * r->speed * grip };
 	float d[2] = { want[0] - r->vel[0], want[1] - r->vel[2] };
 	float len = sqrtf(d[0] * d[0] + d[1] * d[1]);
-	r->sliding = len > SLIP_THRESHOLD;
+	r->sliding = len > 0.02f * f[0] * VEL;
 	if (r->sliding) {
-		r->vel[0] += d[0] / len * SLIDE_STEP;
-		r->vel[2] += d[1] / len * SLIDE_STEP;
+		float step = 0.002f * f[1] * VEL;
+		r->vel[0] += d[0] / len * step;
+		r->vel[2] += d[1] / len * step;
 	} else {
 		r->vel[0] = want[0];
 		r->vel[2] = want[1];
@@ -699,7 +755,18 @@ static void robotStep(Robot* r, const Robot* foe, const Collision* col, const fl
 		break;
 	case ST_STAGGER:
 	case ST_DOWN:
-		// Actions 13 and 14: no control; the hit's own gravity.
+		// Actions 13 and 14: no control; the hit's own gravity. Action 15
+		// (lava) steers like a jump, by s6 up to s5, so the robot can get
+		// off the lava before it lands.
+		if (r->state == ST_DOWN && r->magma && !r->ground) {
+			r->vel[0] += p->airAccel * move[0];
+			r->vel[2] += p->airAccel * move[1];
+			float h = sqrtf(r->vel[0] * r->vel[0] + r->vel[2] * r->vel[2]);
+			if (h > p->airSpeed) {
+				r->vel[0] *= p->airSpeed / h;
+				r->vel[2] *= p->airSpeed / h;
+			}
+		}
 		if (--r->timer <= 0) {
 			if (r->state == ST_STAGGER) {
 				r->state = r->ground ? ST_GROUND : ST_AIR;
@@ -708,6 +775,7 @@ static void robotStep(Robot* r, const Robot* foe, const Collision* col, const fl
 			} else {
 				// Action 16: 30 frames of rebirth, then 60 invulnerable.
 				r->state = ST_REBIRTH;
+				r->magma = false;
 				r->timer = 30;
 				setMotion(r, MO_REBIRTH);
 			}
@@ -773,14 +841,26 @@ static void robotStep(Robot* r, const Robot* foe, const Collision* col, const fl
 		r->vel[1] -= p->gravity;   // on the ground too: it keeps the floor contact
 	}
 
+	// Conveyors, 0x8005cf0c: a robot that was on the ground last frame on a
+	// face whose kind's low byte is 0x18-0x1c is carried by one of five
+	// vectors at 0x801c0a28, added to this frame's move but not kept in the
+	// velocity (arenas 4, 18, 30). In the game's velocity units, so z flips.
+	// GUESS: the game gates this on a byte (0x80377c58) set at stage load,
+	// taken to be on in every battle.
+	static const float conveyor[5] = { -2.2f, -2.2f, 2.2f, 6.0f, -6.0f };
+	float carry = 0;
+	u32 belt = (r->floorKind & 0xff) - 0x18;
+	if (r->ground && belt < 5)
+		carry = -conveyor[belt] * VEL;
+
 	// Sub-step so no step moves more than half the radius.
-	float speed = sqrtf(r->vel[0] * r->vel[0] + r->vel[1] * r->vel[1] + r->vel[2] * r->vel[2]);
+	float speed = sqrtf(r->vel[0] * r->vel[0] + r->vel[1] * r->vel[1] + (r->vel[2] + carry) * (r->vel[2] + carry));
 	int steps = 1 + (int)(speed / (p->radius * 0.5f));
 	bool ground = false;
 	float fall = -r->vel[1];
 	for (int s = 0; s < steps; s++) {
 		float c[3] = { r->pos[0] + r->vel[0] / steps, r->pos[1] + p->radius + r->vel[1] / steps,
-			r->pos[2] + r->vel[2] / steps };
+			r->pos[2] + (r->vel[2] + carry) / steps };
 		bool g = false;
 		float before[3] = { c[0], c[1], c[2] };
 		if (collideSphere(col, c, p->radius, &g, NULL)) {
@@ -867,6 +947,12 @@ static void robotStep(Robot* r, const Robot* foe, const Collision* col, const fl
 	if (ground && r->vel[1] < 0)
 		r->vel[1] = 0;
 	r->ground = ground;
+	// The face underfoot, by the game's downward floor query (0x8006207c):
+	// its kind picks the floor's grip and marks lava.
+	r->floorKind = 0;
+	if (ground)
+		floorKindBelow(col, r->pos[0], r->pos[1] + 0.1f, r->pos[2], &r->floorKind);
+	lavaCheck(r);
 
 	if (r->state == ST_GROUND)
 		setMotion(r, r->speed > p->runSpeed * 0.1f ? MO_RUN : MO_STAND);
@@ -1197,7 +1283,16 @@ static const Cue script[] = {
 	{ 1510, 1511, 0.0f, 0.0f, KEY_X },    // case the first press fell in a
 	{ 1520, 1521, 0.0f, 0.0f, KEY_X },    // landing lag (ignored mid-tackle)
 };
-#define SCRIPT_FRAMES 1860
+// Last, on arenas with lava: the robot is dropped onto a lava face and the
+// launch, its height and the 50 frames of action 15 are judged.
+#define LAVA_FROM 1860
+#define SCRIPT_FRAMES 1990
+// make AUTOPHASE=lava: run the lava phase only, and judge only it.
+#ifdef AUTOTEST_LAVA_ONLY
+#define SCRIPT_START LAVA_FROM
+#else
+#define SCRIPT_START 0
+#endif
 // A every 4 frames while dashing, so each dash starts as soon as the last ends.
 #define DASH_FROM 612
 #define DASH_TO 700
@@ -1225,10 +1320,33 @@ typedef struct {
 	int curDown, downRun, curReb, rebRun, curInv, invRun;
 	bool skyShot, tackleRan;
 	int tackleFrames;
+	bool lava;            // the arena has a lava face; dropped on it at LAVA_FROM
+	float lavaY, lavaRise;
+	int lavaTouches, curMagma, magmaRun;
 	bool done, pass;
-	char line[10][48];
+	char line[11][48];
 } AutoCheck;
-#define CHECK_LINES 10
+#define CHECK_LINES 11
+
+// The middle of the first lava floor face (kind >> 3 == 1), to drop onto.
+static bool lavaSpot(const Collision* c, float at[3])
+{
+	for (u32 i = 0; i < c->blockCount; i++) {
+		const ColBlock* bl = &c->blocks[i];
+		if (bl->flags & 0x80)
+			continue;
+		for (u32 k = 0; k < bl->faceCount; k++) {
+			const ColFace* f = &bl->faces[k];
+			if (f->kind >> 3 != 1 || f->n[1] < 0.6f)
+				continue;
+			at[0] = at[1] = at[2] = 0;
+			for (u32 v = 0; v < bl->nverts; v++)
+				for (int a = 0; a < 3; a++) at[a] += f->v[v][a] / bl->nverts;
+			return true;
+		}
+	}
+	return false;
+}
 
 static void autoSample(AutoCheck* c, const Robot* r, const Robot* foe, int t, float* yawMark)
 {
@@ -1256,8 +1374,11 @@ static void autoSample(AutoCheck* c, const Robot* r, const Robot* foe, int t, fl
 	if (r->state == ST_TACKLE) { c->tackleRan = true; c->tackleFrames++; }
 	// The other robot's knockdown timeline, as states run: down, rebirth,
 	// then invulnerable. A hit while down does not restart the down time,
-	// so a juggled run is judged against the body's figure too.
-	if (foe->state == ST_DOWN) {
+	// so a juggled run is judged against the body's figure too. Only up to
+	// the lava phase: lava is on from there, and the other robot may stand
+	// on it too, which is action 15's 50 frames, not the body's figure.
+	if (t >= LAVA_FROM) {
+	} else if (foe->state == ST_DOWN) {
 		c->curDown++;
 	} else if (c->curDown) {
 		c->downRun = c->curDown;
@@ -1272,6 +1393,11 @@ static void autoSample(AutoCheck* c, const Robot* r, const Robot* foe, int t, fl
 	} else if (c->curInv) {
 		if (foe->invuln > 0) c->curInv++;
 		else { c->invRun = c->curInv; c->curInv = 0; }
+	}
+	if (c->lava && t >= LAVA_FROM) {
+		if (r->pos[1] - c->lavaY > c->lavaRise) c->lavaRise = r->pos[1] - c->lavaY;
+		if (r->state == ST_DOWN && r->magma) c->curMagma++;
+		else if (c->curMagma && !c->magmaRun) c->magmaRun = c->curMagma;
 	}
 	if (t != SCRIPT_FRAMES - 1)
 		return;
@@ -1317,7 +1443,26 @@ static void autoSample(AutoCheck* c, const Robot* r, const Robot* foe, int t, fl
 	bool tackle = c->tackleRan && abs(c->tackleFrames - tackleWant) <= 1;
 	snprintf(c->line[9], 48, "tkl  %s %d of %d f, hit %d, sky %s", tackle && sky ? "ok  " : "FAIL", c->tackleFrames,
 		tackleWant, r->tacklesLanded, p->dashType != DASH_SKY ? "n/a" : c->skyShot ? "yes" : "no");
-	c->pass = run && full && hop && dash && turn && land && skid && arms && timeline && tackle && sky;
+	// Lava: thrown straight up at 250 x body 0x43 / 1000, falling at 0.6,
+	// so it rises v^2 / 2g; down for 50 frames, then the rebirth.
+	bool lava = true;
+	if (c->lava) {
+		const u8* B = r->combat;
+		float v = 250 * (B ? B[1] : 100) / 1000.0f * VEL, g = 0.006f * 100 * VEL;
+		float riseWant = v * v / (2 * g);
+		lava = r->lavaTouches - c->lavaTouches > 0 && abs(c->magmaRun - LAVA_DOWN) <= 1
+			&& fabsf(c->lavaRise - riseWant) <= riseWant * 0.15f;
+		snprintf(c->line[10], 48, "lava %s rise %.2f/%.2f down %d", lava ? "ok  " : "FAIL", c->lavaRise, riseWant,
+			c->magmaRun);
+	} else {
+		snprintf(c->line[10], 48, "lava --   none in this arena");
+	}
+	c->pass = run && full && hop && dash && turn && land && skid && arms && timeline && tackle && sky && lava;
+#ifdef AUTOTEST_LAVA_ONLY
+	for (int k = 0; k < 10; k++)
+		c->line[k][0] = 0;
+	c->pass = c->lava && lava;   // an arena without lava has nothing to pass
+#endif
 	c->done = true;
 }
 #endif
@@ -1362,6 +1507,17 @@ static bool stageLoad(Stage* s, int index, char* err, size_t errSize)
 		s->spawn[k][0] = cx;
 		s->spawn[k][1] = top;
 		s->spawn[k][2] = cz + (k ? -ext : ext);
+		// GUESS: the game's own spawn points are not traced. One over lava
+		// (arena 30's floor is lava in the middle) moves toward its own end
+		// of the arena, then back past the start, onto the first solid floor.
+		for (int step = 1; step <= 40; step++) {
+			u32 kind;
+			float* at = s->spawn[k];
+			if (floorKindBelow(c, at[0], at[1], at[2], &kind) > -1e8f && kind >> 3 != 1)
+				break;
+			float dz = 0.5f * (step <= 20 ? step : 20 - step);
+			at[2] = cz + (k ? -ext - dz : ext + dz);
+		}
 	}
 	return true;
 }
@@ -1448,7 +1604,7 @@ void battleRun(C3D_RenderTarget* top, const MotionSet* set, const BattleRoster* 
 	int meterFrames = 0, meterSteps = 0;
 	float fps = 0.0f, speed = 0.0f;
 #ifdef AUTOTEST
-	int autoFrame = 0, autoRuns = 0, autoPasses = 0;
+	int autoFrame = SCRIPT_START, autoRuns = 0, autoPasses = 0;
 	AutoCheck check, lastCheck;
 	memset(&check, 0, sizeof check);
 	memset(&lastCheck, 0, sizeof lastCheck);
@@ -1477,7 +1633,7 @@ void battleRun(C3D_RenderTarget* top, const MotionSet* set, const BattleRoster* 
 		float sy = abs(pad.dy) > 15 ? pad.dy / 150.0f : 0.0f;
 #ifdef AUTOTEST
 		if (autoFrame == SCRIPT_FRAMES) {
-			autoFrame = 0;
+			autoFrame = SCRIPT_START;
 			autoRuns++;
 			autoPasses += check.pass;
 			lastCheck = check;
@@ -1513,6 +1669,7 @@ void battleRun(C3D_RenderTarget* top, const MotionSet* set, const BattleRoster* 
 		}
 		int scriptT = autoFrame++;
 		scripted(scriptT, &sx, &sy, &down, &held);
+		sLavaOn = scriptT >= LAVA_FROM;   // the movement checks run off the lava
 		towardFoe = sx == TOWARD_FOE;
 		if (towardFoe) sx = sy = 0;
 #endif
@@ -1629,6 +1786,20 @@ void battleRun(C3D_RenderTarget* top, const MotionSet* set, const BattleRoster* 
 				memset(&pad, 0, sizeof pad);
 				move[0] = move[1] = 0;
 			}
+#ifdef AUTOTEST
+			if (scriptT == LAVA_FROM && lavaSpot(&stage.col, me->pos)) {
+				check.lava = true;
+				check.lavaY = me->pos[1];
+				check.lavaTouches = me->lavaTouches;
+				me->pos[1] += 1.0f;
+				memset(me->vel, 0, sizeof me->vel);
+				me->speed = 0;
+				me->state = ST_AIR;
+				me->ground = me->magma = false;
+				me->invuln = 0;
+				memset(&me->hit, 0, sizeof me->hit);
+			}
+#endif
 			robotStep(me, foe, &stage.col, move, &pad);
 			Pad idle = { 0 };
 			float cpuMove[2] = { 0, 0 };
@@ -1694,7 +1865,8 @@ void battleRun(C3D_RenderTarget* top, const MotionSet* set, const BattleRoster* 
 				fprintf(log, "# arena %d body %d leg %d %s\n", arena, body, partIndex[PART_LEG],
 					check.pass ? "PASS" : "FAIL");
 				for (int k = 0; k < CHECK_LINES; k++)
-					fprintf(log, "#   %s\n", check.line[k]);
+					if (check.line[k][0])
+						fprintf(log, "#   %s\n", check.line[k]);
 			}
 			if (log)
 				fprintf(log, "%d %d %d %.4f %.3f %.3f %.3f %.4f %.4f %.4f %d %d %d  %d %d %.3f %.3f %.3f %d  %d %.2f %.2f %.2f\n", arena, scriptT,

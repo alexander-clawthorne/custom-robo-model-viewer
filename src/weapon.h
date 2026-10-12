@@ -76,7 +76,8 @@ typedef struct {
 	Blast blast;
 } PodStats;
 
-enum { HIT_GUN = 1, HIT_BOMB = 2, HIT_POD = 3, HIT_TACKLE = 4 };
+// HIT_MAGMA is the floor's: 0x8004b0a0 writes it for a lava face (kind 0x8).
+enum { HIT_GUN = 1, HIT_BOMB = 2, HIT_POD = 3, HIT_TACKLE = 4, HIT_MAGMA = 5 };
 
 // The victim's hit record, filled by the other robot's weapons and read
 // (then cleared) by the victim's next frame, as 0x8004b0a0 reads S+0x18a0.

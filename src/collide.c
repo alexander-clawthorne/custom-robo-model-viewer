@@ -223,7 +223,14 @@ bool collideSegment(const Collision* c, const float a[3], const float b[3], floa
 
 float floorBelow(const Collision* c, float x, float y, float z)
 {
+	return floorKindBelow(c, x, y, z, NULL);
+}
+
+float floorKindBelow(const Collision* c, float x, float y, float z, u32* kind)
+{
 	float best = -1e9f;
+	if (kind)
+		*kind = 0;
 	for (u32 i = 0; i < c->blockCount; i++) {
 		const ColBlock* bl = &c->blocks[i];
 		if (bl->flags & 0x80)
@@ -238,8 +245,11 @@ float floorBelow(const Collision* c, float x, float y, float z)
 			// Height of the face's plane under (x, z).
 			float h = -(f->n[0] * x + f->n[2] * z + f->d) / f->n[1];
 			float q[3] = { x, h, z };
-			if (h <= y && h > best && insideFace(f, bl->nverts, q))
+			if (h <= y && h > best && insideFace(f, bl->nverts, q)) {
 				best = h;
+				if (kind)
+					*kind = f->kind;
+			}
 		}
 	}
 	return best;

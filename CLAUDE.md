@@ -41,6 +41,9 @@ docker run --rm -v "C:/Users/Alexander/source/repos/custom-robo-3ds:/proj" -w /p
   one line per frame). Fast-forward does not change results: the game steps
   per frame, not per second. One robot: `AUTOBODY=<0-33> AUTOLEG=<0-28>
   AUTOARENA=<0-39>` (4 s); all bodies' dash types: `AUTOSTEP=4` (~40 s).
+  One test on its own: `tools/citra/battle_one.ps1 -Arena N [-Body B
+  -Leg L] [-Phase lava] [-Log]` clears, builds, runs and prints only that
+  arena's verdict -- prefer it to a sweep when one thing changed.
   Screenshots only for things that must be seen. The run also fires every
   weapon, tackles, and times the knockdown / rebirth / invulnerability.
 - Battle controls (the user's choice): A jump / air dash, B gun, R/ZR bomb
@@ -179,7 +182,12 @@ docker run --rm -v "C:/Users/Alexander/source/repos/custom-robo-3ds:/proj" -w /p
   unless that is more than 0.02/frame from its velocity; then it slides
   at 0.002/frame -- the skid after landing a moving jump. The floor is
   found by a downward query, 0x8006207c; walls by a routine not yet
-  traced. Per-body dimensions (30 floats, stride 0x78 from 0x801c5c10,
+  traced. The face kind under the robot picks the floor row
+  ((kind >> 16) & 0xff, 0x8005d068), lava (kind >> 3 == 1) and conveyors
+  (low byte 0x18-0x1c, 0x8005cf0c); see `tools/collision.py`. Lava writes
+  the robot's own hit record (0x8004cd64): kind 5, 100 damage, down -1,
+  launch 250 straight up; action 15 (0x80045ce8) is down 50 frames, falls
+  at the plain 0.6, steers like a jump (s6 up to s5), motion sf_fall_magma. Per-body dimensions (30 floats, stride 0x78 from 0x801c5c10,
   copied to S+0x17f4): word 0 is the height (Ray 1.31).
 - Battle camera (`battleCamera` in src/battle.c): camera modes are an
   (init, update) pair per mode at 0x801f7ff0, names at 0x801f88a4

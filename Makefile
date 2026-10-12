@@ -78,6 +78,10 @@ endif
 ifneq ($(AUTOARENA),)
 CFLAGS	+=	-DAUTOTEST_ARENA=$(AUTOARENA)
 endif
+# AUTOPHASE=lava runs only the last phase: the drop onto a lava face.
+ifeq ($(AUTOPHASE),lava)
+CFLAGS	+=	-DAUTOTEST_LAVA_ONLY
+endif
 endif
 
 CXXFLAGS	:= $(CFLAGS) -fno-rtti -fno-exceptions -std=gnu++11
