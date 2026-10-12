@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
-"""Cook HSD effect animations into EFX1 files (romfs/<cat>/anim.efx).
+"""Cook HSD effect animations into EFX2 files (romfs/<cat>/anim.efx).
 
     python tools/cook_effects.py            # all categories
     python tools/cook_effects.py gunfx      # one category
 
-EFX1 layout (little-endian):
-  'EFX1', u32 count, u32 offsets[count]
+EFX2 layout (little-endian):
+  'EFX2', u32 count, u32 offsets[count]
   Per animation:
-    f32 duration, u32 joint_track_count, u32 mat_track_count
+    f32 duration, u32 joint_track_count, u32 mat_track_count, u32 model_count
+    model_count * { u16 first_joint, u16 joint_count, f32 duration }
+      -- one per ModelSet: its joints in the CRM4 list and its own end frame,
+         so the game's separate models (bullet, trail, flash) play alone.
     joint_track_count * { s16 joint, u8 channel, u8 pad, u16 key_count, u16 pad,
                           key_count * { f32 frame, f32 value, f32 tanIn, f32 tanOut } }
     mat_track_count  * { s16 mat,   u8 channel, u8 pad, u16 key_count, u16 pad,
@@ -120,8 +123,11 @@ def cook_anim_v2(archive, index):
     duration = 0.0
     joint_blobs = []
     mat_blobs = []
+    models = []   # (first_joint, joint_count, duration) per ModelSet
+    total = 0.0
 
-    for ms in model_sets(d):
+    for k, ms in enumerate(model_sets(d)):
+        total, duration = max(total, duration), 0.0
         for root in anim_roots(d, ms, ANIM_JOINT):
             # Walk AnimJoint tree; each node has child@0, next@4, AObj@8
             def visit_anim(aj_off, jobj_off):
@@ -176,13 +182,17 @@ def cook_anim_v2(archive, index):
                         if keys:
                             mat_blobs.append((mat_idx, f.track, keys))
                 mat_idx += 1
+        own = [j.index for j in joints if getattr(j, 'model', None) == k]
+        models.append((min(own), len(own), duration) if own else (0, 0, duration))
 
-    return duration, joint_blobs, mat_blobs
+    return max(total, duration), joint_blobs, mat_blobs, models
 
 
-def pack_anim(duration, joint_blobs, mat_blobs):
+def pack_anim(duration, joint_blobs, mat_blobs, models=()):
     """Serialise one animation to bytes."""
-    out = bytearray(struct.pack('<f2I', duration, len(joint_blobs), len(mat_blobs)))
+    out = bytearray(struct.pack('<f3I', duration, len(joint_blobs), len(mat_blobs), len(models)))
+    for first, count, dur in models:
+        out += struct.pack('<HHf', first, count, dur)
     for joint_idx, channel, keys in joint_blobs:
         blob = pack_keys(keys)
         out += struct.pack('<hBBHH', joint_idx, channel, 0, len(keys), 0)
@@ -200,21 +210,20 @@ def cook_category(archive):
     skipped = 0
     for i in range(count):
         try:
-            duration, jblobs, mblobs = cook_anim_v2(archive, i)
-            anims.append(pack_anim(duration, jblobs, mblobs))
+            anims.append(pack_anim(*cook_anim_v2(archive, i)))
         except Exception as e:
             anims.append(pack_anim(0.0, [], []))
             skipped += 1
 
-    # Build EFX1 file
-    header_size = 8 + 4 * count   # 'EFX1' + u32 count + u32 offsets[count]
+    # Build EFX2 file
+    header_size = 8 + 4 * count   # 'EFX2' + u32 count + u32 offsets[count]
     offsets = []
     pos = header_size
     for a in anims:
         offsets.append(pos)
         pos += len(a)
 
-    out = bytearray(b'EFX1' + struct.pack('<I', count))
+    out = bytearray(b'EFX2' + struct.pack('<I', count))
     for off in offsets:
         out += struct.pack('<I', off)
     for a in anims:

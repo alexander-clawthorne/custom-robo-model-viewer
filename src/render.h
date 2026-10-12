@@ -25,6 +25,9 @@ void renderFini(void);
 void drawModelEx(const Model* m, const C3D_Mtx* projection, const C3D_Mtx* view,
 	const Mat34* world, const C3D_Mtx* fixed, int onlyRoot);
 void drawModel(const Model* m, const C3D_Mtx* projection, const C3D_Mtx* view, const Mat34* world);
+// Only the batches bound to joints [jointLo, jointHi): one model of a CRM4 effect.
+void drawModelJoints(const Model* m, const C3D_Mtx* projection, const C3D_Mtx* view,
+	const Mat34* world, int jointLo, int jointHi);
 
 // A part sits at its rig slot's world matrix with the basis scaled by PART_SCALE.
 void partMatrix(const Mat34* slot, C3D_Mtx* out);

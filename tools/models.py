@@ -163,6 +163,7 @@ def load_model(archive, index=0):
             # walk_joints numbers each tree from 0, so shift to global indices.
             base = len(joints)
             for jj in j:
+                jj.model = model
                 jj.index += base
                 if jj.parent >= 0:
                     jj.parent += base

@@ -13,6 +13,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "anim.h"
+#include "effects.h"
 #include "model.h"
 #include "render.h"
 
@@ -77,6 +78,9 @@ static void addHit(Arsenal* a, Hit* h, int kind, const HitParams* p, int power, 
 void arsenalReset(Arsenal* a, const GunStats* gun, const BombStats* bomb, const PodStats* pod)
 {
 	u32 rng = a->rng ? a->rng : 12345;
+	for (int i = 0; i < MAX_BULLETS; i++)
+		if (a->bullets[i].fx) efxKill(a->bullets[i].fx - 1);
+	if (a->flashFx) efxKill(a->flashFx - 1);
 	memset(a, 0, sizeof *a);
 	a->gun = gun;
 	a->bomb = bomb;
@@ -110,9 +114,74 @@ void gunInterrupt(Arsenal* a, bool deleteShots)
 		for (int i = 0; i < MAX_BULLETS; i++) a->bullets[i].state = 0;
 }
 
-static void (*sGunFireCb)(const float* pos);
+static EfxSet* sGunFxSet;
+static Model*  sGunFxModel;
+static int     sGunFxIndex = -1;
 
-void weaponSetGunFireCb(void (*cb)(const float* pos)) { sGunFireCb = cb; }
+void weaponSetGunFx(EfxSet* set, Model* model, int index)
+{
+	sGunFxSet = set;
+	sGunFxModel = model;
+	sGunFxIndex = index;
+}
+
+// A basis with `axis` (normalised) as column `col`, the other two square to
+// it and to world up (world x if axis is vertical), every column times scale.
+static void axisMatrix(const float* axis, int col, float scale, const float* pos, Mat34* m)
+{
+	float a[3] = { axis[0], axis[1], axis[2] };
+	if (norm3(a) < 1e-6f) { a[0] = 0; a[1] = 0; a[2] = 1; }
+	float s[3] = { -a[2], 0, a[0] };   // a x up
+	if (norm3(s) < 1e-6f) { s[0] = 1; s[1] = 0; s[2] = 0; }
+	float t[3] = { s[1] * a[2] - s[2] * a[1], s[2] * a[0] - s[0] * a[2], s[0] * a[1] - s[1] * a[0] };
+	// columns (col, col+1, col+2) = (a, t, s) keeps the basis right-handed
+	const float* c[3] = { a, t, s };
+	for (int r = 0; r < 3; r++) {
+		for (int k = 0; k < 3; k++)
+			m->m[r][(col + k) % 3] = c[k][r] * scale;
+		m->m[r][3] = pos[r];
+	}
+}
+
+// Per flying bullet, model 0 of the gun's effect (0x800381d0 builds its
+// matrix): +Y along the flight (0x8001d03c writes column 1), scaled by the
+// phase's radius, at the bullet. Its animation runs 30 frames per phase
+// (rate 150 / frames / 5). Any other state ends it.
+static void bulletFxSync(Arsenal* a, const Fighter* me)
+{
+	for (int i = 0; i < MAX_BULLETS; i++) {
+		Bullet* b = &a->bullets[i];
+		if (b->state != 1 || !sGunFxModel) {
+			if (b->fx) efxKill(b->fx - 1);
+			b->fx = 0;
+			continue;
+		}
+		const GunPhase* E = &b->pat->phase[b->phase];
+		Mat34 m;
+		axisMatrix(b->dir, 1, E->radius, b->pos, &m);
+		if (!b->fx || !efxMove(b->fx - 1, &m)) {
+			int h = efxSpawn(sGunFxSet, sGunFxIndex, sGunFxModel, 0, &m, true);
+			b->fx = h >= 0 ? h + 1 : 0;
+		}
+		if (b->fx && E->frames)
+			efxSetRate(b->fx - 1, 30.0f / E->frames);
+	}
+	// Model 1 is the muzzle flash: 10 frames from each shot (0x80042fa4),
+	// drawn at the muzzle joint's world matrix (0x80042a68). Only the
+	// barrel's +X is known here, so the roll about it is a guess.
+	if (a->flashTimer > 0 && sGunFxModel) {
+		Mat34 m;
+		axisMatrix(me->gunDir, 0, PART_SCALE, me->gunAt, &m);
+		if (!a->flashFx || !efxMove(a->flashFx - 1, &m)) {
+			int h = efxSpawn(sGunFxSet, sGunFxIndex, sGunFxModel, 1, &m, false);
+			a->flashFx = h >= 0 ? h + 1 : 0;
+		}
+		a->flashTimer--;
+	} else if (a->flashFx) {
+		efxKill(a->flashFx - 1);
+		a->flashFx = 0;
+	}
+}
 
 static void fireVolley(Arsenal* a, const GunPattern* P, const Fighter* me, const Fighter* foe, const Collision* col)
 {
@@ -138,7 +207,7 @@ static void fireVolley(Arsenal* a, const GunPattern* P, const Fighter* me, const
 		memcpy(b->dir, dir, sizeof b->dir);
 		memcpy(b->trail[0], b->pos, sizeof b->pos);
 		a->fired++;
-		if (n == 0 && sGunFireCb) sGunFireCb(me->gunAt);
+		a->flashTimer = 10;
 		// A muzzle inside a wall: the bullet ends where the wall is.
 		float hit[3], nrm[3];
 		if (collideSegment(col, me->hips, b->pos, hit, nrm)) {
@@ -686,6 +755,7 @@ void arsenalStep(Arsenal* a, const Fighter* me, const Fighter* foe, Hit* foeHit,
 			if (a->bullets[i].state)
 				bulletStep(a, &a->bullets[i], me, foe, foeHit, col, bounds);
 	}
+	bulletFxSync(a, me);
 	if (a->bomb) {
 		if (a->aiming && a->bombReload <= 0) {
 			// The stick moves the cursor, 0.1 * 175 hundredths a frame.
@@ -812,7 +882,8 @@ void arsenalDraw(const Arsenal* a, const C3D_Mtx* projection, const C3D_Mtx* vie
 			continue;
 		float r = b->pat->phase[b->phase].radius * 0.6f;
 		if (r < 0.06f) r = 0.06f;
-		drawBall(BALL_BULLET, b->pos, r, r, projection, view);
+		if (!b->fx)   // the gun's own effect stands in for the ball
+			drawBall(BALL_BULLET, b->pos, r, r, projection, view);
 		// A long trail (the lasers) is drawn as a string of beads.
 		int trail = b->pat->phase[b->phase].trail;
 		for (int s = 4; s <= trail && s < b->age && s < BULLET_TRAIL; s += 4)

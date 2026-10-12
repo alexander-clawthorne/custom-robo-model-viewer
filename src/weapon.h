@@ -2,6 +2,7 @@
 #include <3ds.h>
 #include <citro3d.h>
 #include "collide.h"
+#include "effects.h"
 
 // Gun, bomb and pod records as tools/stats.py cooks them into
 // romfs/stats/parts.bin (little-endian, field for field). Distances are world
@@ -117,6 +118,7 @@ typedef struct {
 	const GunPattern* pat;
 	float pos[3], dir[3];
 	float trail[BULLET_TRAIL][3];   // ring of recent positions, newest at age
+	int fx;               // effect handle + 1, 0 = none
 } Bullet;
 
 typedef struct {
@@ -167,6 +169,7 @@ typedef struct {
 	u32 rng;
 	// Counters for the autotest and the bottom screen.
 	int fired, thrown, launched, hits[5], blasts;
+	int flashFx, flashTimer;   // muzzle flash: effect handle + 1, frames left
 } Arsenal;
 
 typedef struct {
@@ -201,5 +204,6 @@ void weaponDrawInit(void);
 void weaponDrawFini(void);
 void arsenalDraw(const Arsenal* a, const C3D_Mtx* projection, const C3D_Mtx* view);
 
-// Optional callback fired when a gun shoots: pos is the muzzle world position.
-void weaponSetGunFireCb(void (*cb)(const float* pos));
+// The gun's effect archive (gunfx index, its model and the animation set):
+// each flying bullet carries its ModelSet 0. NULL model = plain balls only.
+void weaponSetGunFx(EfxSet* set, Model* model, int index);

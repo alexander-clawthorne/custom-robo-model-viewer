@@ -45,8 +45,8 @@ void renderFini(void)
 	DVLB_Free(vshader);
 }
 
-void drawModelEx(const Model* m, const C3D_Mtx* projection, const C3D_Mtx* view,
-	const Mat34* world, const C3D_Mtx* fixed, int onlyRoot)
+static void drawBatches(const Model* m, const C3D_Mtx* projection, const C3D_Mtx* view,
+	const Mat34* world, const C3D_Mtx* fixed, int onlyRoot, int jointLo, int jointHi)
 {
 	const C3D_Mtx* modelView = view;
 	C3D_BufInfo* buf = C3D_GetBufInfo();
@@ -60,6 +60,8 @@ void drawModelEx(const Model* m, const C3D_Mtx* projection, const C3D_Mtx* view,
 		const ModelBatch* b = &m->batches[i];
 		bool lit = b->flags & MODEL_LIT;
 		if (onlyRoot >= 0 && b->root != onlyRoot)
+			continue;
+		if (jointHi > jointLo && (b->joint < jointLo || b->joint >= jointHi))
 			continue;
 		if (fixed) {
 			C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, uModelView, fixed);
@@ -93,6 +95,18 @@ void drawModelEx(const Model* m, const C3D_Mtx* projection, const C3D_Mtx* view,
 		C3D_DepthTest(true, GPU_GREATER, (b->flags & MODEL_NO_ZWRITE) ? GPU_WRITE_COLOR : GPU_WRITE_ALL);
 		C3D_DrawArrays(GPU_TRIANGLES, b->first, b->count);
 	}
+}
+
+void drawModelEx(const Model* m, const C3D_Mtx* projection, const C3D_Mtx* view,
+	const Mat34* world, const C3D_Mtx* fixed, int onlyRoot)
+{
+	drawBatches(m, projection, view, world, fixed, onlyRoot, 0, 0);
+}
+
+void drawModelJoints(const Model* m, const C3D_Mtx* projection, const C3D_Mtx* view,
+	const Mat34* world, int jointLo, int jointHi)
+{
+	drawBatches(m, projection, view, world, NULL, -1, jointLo, jointHi);
 }
 
 void drawModel(const Model* m, const C3D_Mtx* projection, const C3D_Mtx* view, const Mat34* world)

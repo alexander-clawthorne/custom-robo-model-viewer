@@ -21,12 +21,6 @@ static EfxSet   sGunfxSet;
 static bool     sGunfxSetReady;
 static int      sGunfxIndex = -1;   // gunfx index of sGunfxModel, -1 = none loaded
 
-static void onGunFire(const float* pos)
-{
-	if (sGunfxSetReady && sGunfxIndex >= 0)
-		efxSpawn(&sGunfxSet, sGunfxIndex, &sGunfxModel, pos);
-}
-
 // The battle loader 0x80075950 loads gun_effect.BIN entry = gun id
 // (lhz 4 of the slot's loadout at 0x801c5bd0), so a gun's effects are
 // gunfx 2*id (sub-archive 0, projectile) and 2*id+1 (burst).
@@ -44,6 +38,7 @@ static void gunfxSelect(int gun)
 	snprintf(path, sizeof path, "romfs:/gunfx/%03d.crm", index);
 	if (modelLoad(&sGunfxModel, path, err, sizeof err))
 		sGunfxIndex = index;
+	weaponSetGunFx(&sGunfxSet, sGunfxSetReady && sGunfxIndex >= 0 ? &sGunfxModel : NULL, sGunfxIndex);
 }
 
 #define CLEAR_COLOR 0x202830FF
@@ -1400,8 +1395,6 @@ void battleRun(C3D_RenderTarget* top, const MotionSet* set, const BattleRoster* 
 	ArenaBounds bounds = { { 0, 0 }, 1e6f };
 	weaponDrawInit();
 	sGunfxSetReady = efxSetLoad(&sGunfxSet, "romfs:/gunfx/anim.efx");
-	if (sGunfxSetReady)
-		weaponSetGunFireCb(onGunFire);
 	PartStats stats;
 	bool haveStats = statsLoad(&stats, "romfs:/stats/parts.bin");
 	int bodies = roster->bodies / 5;
@@ -1784,7 +1777,7 @@ void battleRun(C3D_RenderTarget* top, const MotionSet* set, const BattleRoster* 
 		if (havePart[k]) modelFree(&parts[k]);
 	stageFree(&stage);
 	statsFree(&stats);
-	weaponSetGunFireCb(NULL);
+	weaponSetGunFx(NULL, NULL, -1);
 	efxClearAll();
 	if (sGunfxSetReady) {
 		efxSetFree(&sGunfxSet);
