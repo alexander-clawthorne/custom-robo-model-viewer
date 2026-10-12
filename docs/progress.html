@@ -88,6 +88,62 @@ tr.group td { background: var(--bg); font-family: var(--font-display); font-weig
 .cols > * { min-width: 0; }
 .callout { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; display: grid; gap: 6px; }
 .note { font-size: 0.88rem; color: var(--muted); }
+/* Tabs: Progress (the tracker) and Issues (a playtest log kept in the artifact's db). */
+[hidden] { display: none !important; }
+.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin-top: -16px; }
+.tab { font: 600 0.95rem var(--font-display); letter-spacing: 0.03em; color: var(--muted); background: none; border: 0; border-bottom: 3px solid transparent; padding: 10px 14px 9px; cursor: pointer; display: inline-flex; align-items: center; gap: 8px; margin-bottom: -1px; }
+.tab:hover { color: var(--ink); }
+.tab[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); }
+.tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 4px; }
+.tab .badge { font: 600 0.72rem var(--font-body); min-width: 1.6em; padding: 1px 6px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); text-align: center; font-variant-numeric: tabular-nums; }
+.panel { display: grid; gap: 40px; }
+
+/* Issues: quick-add form, filter, then one card per issue with its checkmark. */
+.issue-form { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; display: grid; gap: 10px; }
+.issue-form .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.field { font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 9px 11px; width: 100%; box-sizing: border-box; }
+.field:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-color: transparent; }
+textarea.field { min-height: 4.5em; resize: vertical; }
+select.field { width: auto; padding-block: 7px; }
+.btn { font: 600 0.9rem var(--font-body); border-radius: 8px; padding: 8px 14px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+.btn:hover { border-color: var(--muted); }
+.btn:disabled { opacity: 0.55; cursor: default; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn.primary:hover { filter: brightness(1.08); }
+.btn.small { font-size: 0.8rem; padding: 4px 9px; }
+.btn.quiet { border-color: transparent; background: none; color: var(--muted); }
+.btn.quiet:hover { color: var(--ink); border-color: var(--line); }
+.btn.danger:hover { color: var(--accent); border-color: var(--accent); }
+.btn svg { width: 16px; height: 16px; }
+.spacer { flex: 1; }
+.hint { font-size: 0.8rem; color: var(--muted); }
+.thumbs { display: flex; flex-wrap: wrap; gap: 8px; }
+.thumb { position: relative; width: 84px; height: 64px; border-radius: 6px; overflow: hidden; border: 1px solid var(--line); background: var(--bg); padding: 0; cursor: zoom-in; }
+.thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.thumb .x { position: absolute; top: 2px; right: 2px; width: 20px; height: 20px; border-radius: 50%; border: 0; background: rgba(0,0,0,0.65); color: #fff; font-size: 13px; line-height: 20px; cursor: pointer; padding: 0; }
+.filters { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.chip { font: 500 0.82rem var(--font-body); border: 1px solid var(--line); background: var(--surface); color: var(--muted); border-radius: 999px; padding: 4px 12px; cursor: pointer; font-variant-numeric: tabular-nums; }
+.chip[aria-pressed="true"] { color: var(--ink); border-color: var(--ink); }
+.issues { display: grid; gap: 8px; }
+.issue { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; align-items: start; }
+.issue > .body { display: grid; gap: 6px; min-width: 0; }
+.issue h3 { font-size: 1rem; overflow-wrap: anywhere; }
+.issue .details { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink); max-width: 72ch; font-size: 0.92rem; }
+.issue .foot { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; font-size: 0.8rem; color: var(--muted); }
+.issue.done h3 { text-decoration: line-through; text-decoration-color: var(--muted); color: var(--muted); }
+.issue.done .details { color: var(--muted); }
+.check { width: 26px; height: 26px; border-radius: 7px; border: 2px solid var(--muted); background: none; cursor: pointer; display: grid; place-items: center; padding: 0; margin-top: 1px; color: transparent; }
+.check:hover { border-color: var(--done); }
+.check svg { width: 16px; height: 16px; }
+.issue.done .check { background: var(--done); border-color: var(--done); color: var(--surface); }
+.check:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.area { font-family: var(--font-mono); font-size: 0.72rem; color: var(--accent); background: var(--accent-soft); padding: 1px 6px; border-radius: 4px; }
+.empty { text-align: center; color: var(--muted); padding: 28px 12px; border: 1px dashed var(--line); border-radius: 10px; }
+.status-line { font-size: 0.85rem; color: var(--muted); min-height: 1.2em; }
+.status-line.err { color: var(--accent); }
+dialog.lightbox { border: 0; padding: 0; background: transparent; max-width: 96vw; max-height: 92vh; }
+dialog.lightbox::backdrop { background: rgba(0,0,0,0.8); }
+dialog.lightbox img { max-width: 96vw; max-height: 92vh; display: block; border-radius: 6px; }
 </style>
 
 <div class="wrap">
@@ -109,6 +165,12 @@ tr.group td { background: var(--bg); font-family: var(--font-display); font-weig
     <span class="count"><b>262 + 646</b> robot + story motions playing</span>
   </div>
 </header>
+<nav class="tabs" role="tablist" aria-label="Tracker sections">
+  <button class="tab" role="tab" id="tabbtn-progress" data-tab="progress" aria-controls="tab-progress" aria-selected="true">Progress</button>
+  <button class="tab" role="tab" id="tabbtn-issues" data-tab="issues" aria-controls="tab-issues" aria-selected="false" tabindex="-1">Issues <span class="badge" id="issue-badge" hidden>0</span></button>
+</nav>
+
+<div class="panel" id="tab-progress" role="tabpanel" aria-labelledby="tabbtn-progress">
 
 <section>
   <div class="section-head">
@@ -247,4 +309,384 @@ tr.group td { background: var(--bg); font-family: var(--font-display); font-weig
   <p class="note">Updated by hand from the repo; the repo is the source of truth.</p>
 </section>
 
+</div>
+
+<div class="panel" id="tab-issues" role="tabpanel" aria-labelledby="tabbtn-issues" hidden>
+<section>
+  <div class="section-head">
+    <h2>Playtest issues</h2>
+    <p>Anything that looks wrong on the 3DS, written down while playing. Tick one off when it is fixed. Claude can read this list from a session, so a note here is enough to start on.</p>
+  </div>
+
+  <form class="issue-form" id="issue-form" autocomplete="off">
+    <input class="field" id="i-title" maxlength="200" placeholder="What's wrong? e.g. Gun fires sideways while running" aria-label="Issue title" required>
+    <textarea class="field" id="i-details" maxlength="4000" placeholder="Details (optional): arena, robot, what you pressed, what you expected" aria-label="Details"></textarea>
+    <div class="thumbs" id="i-pending" hidden></div>
+    <div class="row">
+      <select class="field" id="i-area" aria-label="Area">
+        <option>Battle</option><option>Movement</option><option>Weapons</option><option>Camera</option><option>HUD</option><option>Effects</option><option>Models</option><option>Story</option><option>Other</option>
+      </select>
+      <label class="btn" id="i-photo-btn" hidden>
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" aria-hidden="true"><path d="M2 5h2.5l1.2-1.8h4.6L11.5 5H14v8H2z"/><circle cx="8" cy="9" r="2.4"/></svg>
+        Photo
+        <input type="file" id="i-photo" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden>
+      </label>
+      <span class="spacer"></span>
+      <button class="btn primary" type="submit" id="i-add">Add issue</button>
+    </div>
+    <div class="status-line" id="i-status" role="status"></div>
+  </form>
+
+  <div class="filters" role="group" aria-label="Show">
+    <button class="chip" data-filter="open" aria-pressed="true">Open <span data-count="open">0</span></button>
+    <button class="chip" data-filter="done" aria-pressed="false">Fixed <span data-count="done">0</span></button>
+    <button class="chip" data-filter="all" aria-pressed="false">All <span data-count="all">0</span></button>
+  </div>
+  <div class="issues" id="issue-list"><div class="empty">Loading issues&hellip;</div></div>
+  <input type="file" id="add-photo" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden>
+</section>
+</div>
+
+<dialog class="lightbox" id="lightbox"><img alt="" id="lightbox-img"></dialog>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const local = {
+    get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
+    set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} },
+  };
+  const ICON_CHECK = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8.5l3.2 3L13 4.5"/></svg>';
+
+  /* ---------- tabs ---------- */
+  const tabs = [...document.querySelectorAll('.tab')];
+  function showTab(name, focus) {
+    if (!tabs.some(t => t.dataset.tab === name)) name = 'progress';
+    for (const t of tabs) {
+      const on = t.dataset.tab === name;
+      t.setAttribute('aria-selected', on);
+      t.tabIndex = on ? 0 : -1;
+      $('tab-' + t.dataset.tab).hidden = !on;
+      if (on && focus) t.focus();
+    }
+    local.set('cr.tab', name);
+    try { history.replaceState(null, '', '#' + name); } catch (e) {}
+  }
+  tabs.forEach((t, i) => {
+    t.addEventListener('click', () => showTab(t.dataset.tab));
+    t.addEventListener('keydown', e => {
+      if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+      const next = tabs[(i + (e.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length];
+      showTab(next.dataset.tab, true);
+    });
+  });
+  showTab((location.hash || '').slice(1) || local.get('cr.tab') || 'progress');
+
+  /* ---------- issues state ---------- */
+  let db = null, assets = null, issues = [], loaded = false;
+  let filter = 'open', pending = [], editing = null, busy = false;
+  const AREAS = [...$('i-area').options].map(o => o.value);
+  if (local.get('cr.area') && AREAS.includes(local.get('cr.area'))) $('i-area').value = local.get('cr.area');
+
+  function setStatus(text, isErr) {
+    const s = $('i-status');
+    s.textContent = text || '';
+    s.classList.toggle('err', !!isErr);
+  }
+  function errText(e) {
+    const c = e && e.code;
+    if (c === 'too_large') return 'That image is too big (20 MB max).';
+    if (c === 'unsupported_type') return 'Only PNG, JPEG, GIF or WebP images.';
+    if (c === 'quota_or_state' || c === 'quota_exceeded') return 'Storage is full; delete some old issues or photos.';
+    if (c === 'rate_limited' || c === 'resource_exhausted') return 'Too many changes at once; wait a moment and try again.';
+    if (c === 'invalid_argument' || c === 'not_granted') return 'You can view this list but not change it.';
+    return 'Could not save (' + (c || 'error') + '). Try again.';
+  }
+  const blobUrl = id => '/_blob/' + id;
+  function when(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    if (isNaN(d)) return '';
+    return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) + ', ' +
+           d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  }
+
+  /* Phone photos are large: scale to 1600 px on the long side and re-encode as JPEG. */
+  async function shrink(file) {
+    if (!/^image\/(png|jpeg|webp)$/.test(file.type)) return file;
+    try {
+      const bmp = await createImageBitmap(file);
+      const s = Math.min(1, 1600 / Math.max(bmp.width, bmp.height));
+      if (s === 1 && file.size < 1500000) return file;
+      const c = document.createElement('canvas');
+      c.width = Math.round(bmp.width * s); c.height = Math.round(bmp.height * s);
+      c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+      const out = await new Promise(r => c.toBlob(r, 'image/jpeg', 0.85));
+      return out && out.size < file.size ? out : file;
+    } catch (e) { return file; }
+  }
+  const OK_TYPES = /^image\/(png|jpeg|gif|webp)$/;
+  async function uploadAll(files) {
+    const ids = [];
+    for (const f of files) {
+      const r = await assets.upload(f, { type: f.type });
+      ids.push(r.id);
+    }
+    return ids;
+  }
+
+  /* ---------- pending photos on the add form ---------- */
+  async function addPending(files) {
+    const bad = files.filter(f => !OK_TYPES.test(f.type));
+    if (bad.length) setStatus('Skipped ' + bad.length + ' file(s): only PNG, JPEG, GIF or WebP.', true);
+    for (const f of files.filter(f => OK_TYPES.test(f.type))) {
+      const blob = await shrink(f);
+      pending.push({ blob, url: URL.createObjectURL(blob) });
+    }
+    renderPending();
+  }
+  function renderPending() {
+    const box = $('i-pending');
+    box.replaceChildren();
+    box.hidden = !pending.length;
+    pending.forEach((p, i) => {
+      const t = document.createElement('div');
+      t.className = 'thumb';
+      const img = document.createElement('img');
+      img.src = p.url; img.alt = 'Photo ' + (i + 1);
+      const x = document.createElement('button');
+      x.type = 'button'; x.className = 'x'; x.textContent = '×';
+      x.setAttribute('aria-label', 'Remove photo ' + (i + 1));
+      x.onclick = () => { URL.revokeObjectURL(p.url); pending.splice(i, 1); renderPending(); };
+      t.append(img, x);
+      box.append(t);
+    });
+  }
+  $('i-photo').addEventListener('change', e => { addPending([...e.target.files]); e.target.value = ''; });
+  $('issue-form').addEventListener('paste', e => {
+    if (!assets) return;
+    const files = [...(e.clipboardData ? e.clipboardData.files : [])].filter(f => f.type.startsWith('image/'));
+    if (files.length) { e.preventDefault(); addPending(files); }
+  });
+
+  /* ---------- add ---------- */
+  $('issue-form').addEventListener('submit', async e => {
+    e.preventDefault();
+    if (!db || busy) return;
+    const title = $('i-title').value.trim();
+    if (!title) { $('i-title').focus(); return; }
+    busy = true; $('i-add').disabled = true;
+    setStatus(pending.length ? 'Uploading ' + pending.length + ' photo(s)…' : 'Saving…');
+    try {
+      const images = pending.length && assets ? await uploadAll(pending.map(p => p.blob)) : [];
+      const area = $('i-area').value;
+      await db.collection('issues').add({
+        title, details: $('i-details').value.trim(), area, images,
+        done: false, created: new Date().toISOString(), doneAt: null,
+      });
+      local.set('cr.area', area);
+      pending.forEach(p => URL.revokeObjectURL(p.url));
+      pending = []; renderPending();
+      $('i-title').value = ''; $('i-details').value = '';
+      setStatus('Added.');
+      if (filter === 'done') setFilter('open');
+      $('i-title').focus();
+    } catch (err) {
+      setStatus(errText(err), true);
+    } finally {
+      busy = false; $('i-add').disabled = false;
+    }
+  });
+
+  /* ---------- filter ---------- */
+  function setFilter(f) {
+    filter = f;
+    document.querySelectorAll('.chip').forEach(c => c.setAttribute('aria-pressed', c.dataset.filter === f));
+    render();
+  }
+  document.querySelectorAll('.chip').forEach(c => c.addEventListener('click', () => setFilter(c.dataset.filter)));
+
+  /* ---------- actions on one issue ---------- */
+  const ref = id => db.doc('issues/' + id);
+  async function toggle(it) {
+    try { await ref(it.id).update({ done: !it.done, doneAt: it.done ? null : new Date().toISOString() }); }
+    catch (err) { setStatus(errText(err), true); }
+  }
+  async function remove(it) {
+    try {
+      await ref(it.id).delete();
+      if (assets) for (const id of it.images || []) { try { await assets.delete(id); } catch (e) {} }
+    } catch (err) { setStatus(errText(err), true); }
+  }
+  let photoTarget = null;
+  $('add-photo').addEventListener('change', async e => {
+    const it = photoTarget, files = [...e.target.files].filter(f => OK_TYPES.test(f.type));
+    e.target.value = ''; photoTarget = null;
+    if (!it || !files.length) return;
+    setStatus('Uploading ' + files.length + ' photo(s)…');
+    try {
+      const blobs = [];
+      for (const f of files) blobs.push(await shrink(f));
+      const ids = await uploadAll(blobs);
+      await ref(it.id).update({ images: [...(it.images || []), ...ids] });
+      setStatus('Photo added.');
+    } catch (err) { setStatus(errText(err), true); }
+  });
+  async function removePhoto(it, id) {
+    try {
+      await ref(it.id).update({ images: (it.images || []).filter(x => x !== id) });
+      if (assets) { try { await assets.delete(id); } catch (e) {} }
+    } catch (err) { setStatus(errText(err), true); }
+  }
+
+  function openLightbox(id) {
+    $('lightbox-img').src = blobUrl(id);
+    const d = $('lightbox');
+    if (d.showModal) d.showModal(); else window.open(blobUrl(id), '_blank');
+  }
+  $('lightbox').addEventListener('click', () => $('lightbox').close());
+
+  /* ---------- render ---------- */
+  function el(tag, cls, text) {
+    const n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text != null) n.textContent = text;
+    return n;
+  }
+  function button(label, cls, onclick) {
+    const b = el('button', 'btn small ' + (cls || ''), label);
+    b.type = 'button'; b.onclick = onclick;
+    return b;
+  }
+
+  function renderView(it) {
+    const card = el('article', 'issue' + (it.done ? ' done' : ''));
+    const chk = el('button', 'check');
+    chk.type = 'button';
+    chk.innerHTML = ICON_CHECK;
+    chk.setAttribute('role', 'checkbox');
+    chk.setAttribute('aria-checked', !!it.done);
+    chk.setAttribute('aria-label', (it.done ? 'Reopen: ' : 'Mark fixed: ') + it.title);
+    chk.disabled = !db;
+    chk.onclick = () => toggle(it);
+
+    const body = el('div', 'body');
+    body.append(el('h3', '', it.title || '(untitled)'));
+    if (it.details) body.append(el('p', 'details', it.details));
+    if ((it.images || []).length) {
+      const th = el('div', 'thumbs');
+      it.images.forEach((id, i) => {
+        const t = el('div', 'thumb');
+        const img = document.createElement('img');
+        img.src = blobUrl(id); img.alt = 'Photo ' + (i + 1) + ' for ' + it.title; img.loading = 'lazy';
+        img.onclick = () => openLightbox(id);
+        t.append(img);
+        if (editing === it.id && assets) {
+          const x = el('button', 'x', '×');
+          x.type = 'button'; x.setAttribute('aria-label', 'Delete photo ' + (i + 1));
+          x.onclick = ev => { ev.stopPropagation(); t.remove(); removePhoto(it, id); };
+          t.append(x);
+        }
+        th.append(t);
+      });
+      body.append(th);
+    }
+    const foot = el('div', 'foot');
+    if (it.area) foot.append(el('span', 'area', it.area));
+    foot.append(el('span', '', 'Added ' + when(it.created)));
+    if (it.done && it.doneAt) foot.append(el('span', '', 'Fixed ' + when(it.doneAt)));
+    foot.append(el('span', 'spacer'));
+    if (db) {
+      if (assets) foot.append(button('+ Photo', 'quiet', () => { photoTarget = it; $('add-photo').click(); }));
+      foot.append(button('Edit', 'quiet', () => { editing = it.id; render(); }));
+      const del = button('Delete', 'quiet danger', () => {
+        if (del.dataset.armed) { remove(it); return; }
+        del.dataset.armed = '1'; del.textContent = 'Delete for good?';
+        setTimeout(() => { if (del.isConnected) { delete del.dataset.armed; del.textContent = 'Delete'; } }, 3500);
+      });
+      foot.append(del);
+    }
+    body.append(foot);
+    card.append(chk, body);
+    return card;
+  }
+
+  function renderEdit(it) {
+    const card = el('article', 'issue' + (it.done ? ' done' : ''));
+    const form = el('form', 'body');
+    const t = el('input', 'field'); t.value = it.title || ''; t.maxLength = 200; t.required = true; t.setAttribute('aria-label', 'Title');
+    const d = el('textarea', 'field'); d.value = it.details || ''; d.maxLength = 4000; d.setAttribute('aria-label', 'Details');
+    const a = el('select', 'field'); a.setAttribute('aria-label', 'Area');
+    for (const name of AREAS) { const o = el('option', '', name); if (name === it.area) o.selected = true; a.append(o); }
+    form.append(t, d);
+    const view = renderView(it).querySelector('.thumbs');
+    if (view) form.append(view);
+    const row = el('div', 'foot');
+    const save = el('button', 'btn small primary', 'Save'); save.type = 'submit';
+    row.append(a, el('span', 'spacer'), button('Cancel', 'quiet', () => { editing = null; render(); }), save);
+    form.append(row);
+    form.onsubmit = async ev => {
+      ev.preventDefault();
+      const title = t.value.trim();
+      if (!title) return;
+      save.disabled = true;
+      try {
+        await ref(it.id).update({ title, details: d.value.trim(), area: a.value });
+        editing = null; render();
+      } catch (err) { setStatus(errText(err), true); save.disabled = false; }
+    };
+    const spacer = el('span');
+    card.append(spacer, form);
+    setTimeout(() => t.focus(), 0);
+    return card;
+  }
+
+  function render() {
+    const open = issues.filter(i => !i.done), done = issues.filter(i => i.done);
+    document.querySelector('[data-count="open"]').textContent = open.length;
+    document.querySelector('[data-count="done"]').textContent = done.length;
+    document.querySelector('[data-count="all"]').textContent = issues.length;
+    const badge = $('issue-badge');
+    badge.textContent = open.length; badge.hidden = !open.length;
+
+    const list = $('issue-list');
+    if (editing && list.dataset.editing === editing && issues.some(i => i.id === editing)) {
+      return; // keep an edit in progress; it re-renders on save or cancel
+    }
+    list.dataset.editing = editing || '';
+    list.replaceChildren();
+    if (!loaded) { list.append(el('div', 'empty', 'Loading issues…')); return; }
+    const shown = filter === 'open' ? open : filter === 'done' ? done.slice().sort((x, y) => (y.doneAt || '').localeCompare(x.doneAt || '')) : issues;
+    if (!shown.length) {
+      list.append(el('div', 'empty', filter === 'done' ? 'Nothing ticked off yet.' : issues.length ? 'All fixed. Nice.' : 'No issues yet. Spot something while playing? Add it above.'));
+      return;
+    }
+    for (const it of shown) list.append(it.id === editing ? renderEdit(it) : renderView(it));
+  }
+
+  /* ---------- connect ---------- */
+  function unavailable(text) {
+    loaded = true; issues = [];
+    $('i-add').disabled = true;
+    setStatus(text, true);
+    const list = $('issue-list');
+    list.replaceChildren(el('div', 'empty', text));
+  }
+  if (!window.claude || !window.claude.use) {
+    unavailable('Issues are stored on claude.ai; open this page there to see and add them.');
+    return;
+  }
+  window.claude.use('assets').then(a => { assets = a; $('i-photo-btn').hidden = !a; render(); });
+  window.claude.use('db').then(d => {
+    if (!d) { unavailable('Issues are not available in this view (signed out, or opened outside claude.ai).'); return; }
+    db = d;
+    d.collection('issues').orderBy('created', 'desc').onSnapshot(snap => {
+      issues = snap.docs.map(doc => Object.assign({ id: doc.id }, doc.data()));
+      loaded = true;
+      if (editing && !issues.some(i => i.id === editing)) editing = null;
+      render();
+    }, err => unavailable('Lost the connection to the issue list (' + err.code + '). Reload the page.'));
+  });
+})();
+</script>
 </div>

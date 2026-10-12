@@ -2,7 +2,10 @@
 
 Custom Robo (GameCube, GXCE01) assets rebuilt for the 3DS. Progress tracker:
 `docs/progress.html` (published at https://claude.ai/artifact/F3a5jSYw1tkRNhA7vf9zog;
-edit the file, then republish to that URL).
+edit the file, then republish to that URL). Its Issues tab is the user's
+playtest log, kept in the artifact's db, not the HTML: read it with
+`ArtifactData` `list`, collection `issues` (title, details, area, images =
+asset ids served at `/_blob/<id>`, done, created, doneAt).
 
 ## Build
 
