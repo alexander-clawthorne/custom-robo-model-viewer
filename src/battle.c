@@ -248,6 +248,7 @@ typedef struct {
 	bool jumping;
 	float takeoffY, peakY, lastJump, topSpeed;
 	float wantYaw;        // where the stick last pointed, in the world
+	float fireYaw;        // the facing S+0xec at a weapon press: the gun moves along it
 	int heldFrames, lastHeld, dashesThisJump, lastDashes, lastLag, lastJumpLag;
 	float lastLandSpeed;  // horizontal speed at the last landing
 	int motion;           // MO_*
@@ -464,40 +465,45 @@ static void lavaCheck(Robot* r)
 	r->lavaTouches++;
 }
 
-// Ground velocity, 0x8004b0a0: the robot wants its facing times its run
-// speed, times the floor's grip. Within a threshold of its current velocity
-// it simply takes it; beyond, it slides, changing by a fixed step a frame --
-// which is the skid after landing from a moving jump, and the ice of some
-// floors. The row is (face kind >> 16) & 0xff (0x8005d068), into six rows of
-// (threshold 0.02 x, step 0.002 x, grip 0.01 x) at 0x801c6c1c. Every
-// ordinary floor is row 0, (100, 100, 100); the only other row the arenas
-// use is 3, kind 0x30300 (arenas 12 and 16), a slippery floor.
-// GUESS: the grip scales the wanted velocity; how it is applied was not traced.
+// Ground velocity, 0x8004b0a0 (0x8004c4a0-0x8004c73c): the target is the
+// facing S+0xec times the run speed S+0x128 times the floor's grip (scaled
+// at 0x8004c538). If the gap from the velocity to it is within the threshold
+// the velocity takes it (S+0x139 = 0); beyond, it slides (S+0x139 = 1),
+// closing a fixed FRACTION of the gap a frame: vel += factor x (target -
+// vel), 0x8004c73c -- the skid after landing from a moving jump, the glide
+// under the gun, the ice of some floors. Nothing of the body enters it but
+// the run speed. The row is (face kind >> 16) & 0xff (0x8005d068), into six
+// rows at 0x801c6c1c of (threshold 0.02 x, factor 0.002 x, grip 0.01 x), the
+// threshold in velocity units (hundredths), the factor a plain fraction.
+// Every ordinary floor is row 0 (100, 100, 100): within 2 hundredths, else
+// 0.2 of the gap. The only other row the arenas use is 3, kind 0x30300
+// (arenas 12 and 16): 0.7 hundredths, 0.02 of the gap.
+// Not ported: the game also adds the conveyor's velocity S+0xf8 into the
+// target and projects both onto the floor plane (S+0x1e8) first.
 static const s16 floorRow[6][3] = {
 	{ 100, 100, 100 }, { 50, 70, 85 }, { 70, 70, 90 }, { 35, 10, 100 }, { 30, 90, 10 }, { 60, 10, 150 },
 };
-// Row 0, for the autotest's skid check.
-#define SLIP_THRESHOLD (2.0f * VEL)
-#define SLIDE_STEP (0.2f * VEL)
 
-static void groundVelocity(Robot* r)
+static void groundVelocityAlong(Robot* r, float yaw)
 {
 	u32 row = r->floorKind >> 16 & 0xff;
 	const s16* f = floorRow[row < 6 ? row : 0];
 	float grip = 0.01f * f[2];
-	float want[2] = { sinf(r->yaw) * r->speed * grip, cosf(r->yaw) * r->speed * grip };
+	float want[2] = { sinf(yaw) * r->speed * grip, cosf(yaw) * r->speed * grip };
 	float d[2] = { want[0] - r->vel[0], want[1] - r->vel[2] };
 	float len = sqrtf(d[0] * d[0] + d[1] * d[1]);
 	r->sliding = len > 0.02f * f[0] * VEL;
 	if (r->sliding) {
-		float step = 0.002f * f[1] * VEL;
-		r->vel[0] += d[0] / len * step;
-		r->vel[2] += d[1] / len * step;
+		float k = 0.002f * f[1];
+		r->vel[0] += d[0] * k;
+		r->vel[2] += d[1] * k;
 	} else {
 		r->vel[0] = want[0];
 		r->vel[2] = want[1];
 	}
 }
+
+static void groundVelocity(Robot* r) { groundVelocityAlong(r, r->yaw); }
 
 // Buttons for one frame of robotStep.
 typedef struct { bool jump, jumpHeld, gun, bomb, bombHeld, pod, tackle; } Pad;
@@ -511,9 +517,12 @@ static void weaponEnd(Robot* r)
 }
 
 // The weapon presses, in the game's order of priority (0x80049924): gun,
-// bomb, pod, then the tackle on the ground only. Each stops the robot dead,
-// unless fired from a sky dash (0x80048050 -> actions 9, 10, 11), which
-// flies on. Nothing is read during an air jump or an air dash.
+// bomb, pod, then the tackle on the ground only. Unless fired from a sky
+// dash (0x80048050 -> actions 9, 10, 11), which flies on: the gun zeroes the
+// velocity but keeps the run speed S+0x128, so on the ground the robot picks
+// up speed again along its facing while the volleys last; the bomb zeroes
+// both and stops it dead; the pod touches neither and the run carries on.
+// Nothing is read during an air jump or an air dash.
 static void weaponPress(Robot* r, const Robot* foe, const Collision* col, const Pad* pad)
 {
 	const MoveParams* p = &r->p;
@@ -552,12 +561,12 @@ static void weaponPress(Robot* r, const Robot* foe, const Collision* col, const 
 		return;
 	r->state = next;
 	r->skyFire = sky;
-	r->speed = 0;
 	r->hold = 0;
-	if (!sky) {
-		r->vel[0] = r->vel[2] = 0;
-		if (next != ST_POD) r->vel[1] = 0;
-	}
+	r->fireYaw = r->yaw;
+	if (sky || next == ST_BOMB)
+		r->speed = 0;
+	if (!sky && next != ST_POD)
+		r->vel[0] = r->vel[1] = r->vel[2] = 0;
 	if (next == ST_BOMB)
 		bombAim(&r->arms, &r->fig, &foe->fig, col);
 	if (next == ST_POD)
@@ -677,14 +686,23 @@ static void robotStep(Robot* r, const Robot* foe, const Collision* col, const fl
 	case ST_GUN:
 		// Action 3 (9 from a sky dash): the volleys start on the wind-up's
 		// last frame and the action lasts until the gun's recovery is over.
-		// The robot turns to the smoothed aim -- GUESS: the game turns only
-		// the upper body (0x80054238); here the whole robot turns. Not while
+		// The robot is drawn turned to the smoothed aim -- the game turns
+		// only the upper body (0x80054238) and never the facing S+0xec, so
+		// it moves along the facing it had at the press (fireYaw). Not while
 		// sky-dashing, where the stick still steers.
 		if (r->windup == 1 && !gunBusy(&r->arms))
 			gunStart(&r->arms, air);
 		if (r->windup > 0) r->windup--;
 		if (!r->skyFire && (r->aimV[0] != 0 || r->aimV[2] != 0))
 			r->yaw = atan2f(r->aimV[0], r->aimV[2]);
+		// On the ground the run speed holds through the volleys and drops to
+		// 0 for the recovery after the last (0x8004949c: S+0x128 = 0 once
+		// S+0x20c6 is the volley count + 1); the floor rule does the rest.
+		if (!r->skyFire && r->ground) {
+			if (gunRecovering(&r->arms))
+				r->speed = 0;
+			groundVelocityAlong(r, r->fireYaw);
+		}
 		if (!gunBusy(&r->arms) && r->windup < 1)
 			weaponEnd(r);
 		break;
@@ -700,9 +718,14 @@ static void robotStep(Robot* r, const Robot* foe, const Collision* col, const fl
 			float dx = r->arms.cursor[0] - r->pos[0], dz = r->arms.cursor[2] - r->pos[2];
 			if (dx * dx + dz * dz > 1e-4f) r->yaw = atan2f(dx, dz);
 		}
+		if (!r->skyFire && r->ground)
+			groundVelocity(r);   // run speed 0: at rest, or sliding to it
 		break;
 	case ST_POD:
-		// Action 5 (11): ten frames, the pods out on the first.
+		// Action 5 (11): ten frames, the pods out on the first. The run
+		// speed is untouched, so the robot keeps running along its facing.
+		if (!r->skyFire && r->ground)
+			groundVelocity(r);
 		if (--r->windup < 1)
 			weaponEnd(r);
 		break;
@@ -1255,7 +1278,13 @@ static void battleCamera(const Robot* robots, int count, float eye[3], float at[
 // (x right, y forward); keys are pressed on the first frame of a cue and
 // held to its end.
 typedef struct { int from, to; float x, y; u32 keys; } Cue;
+// Run then gun, run then pods: frames of the momentum checks.
+#define GUN_RUN 1580
+#define GUN_PRESS 1670
+#define POD_RUN 1760
+#define POD_PRESS 1830
 #define TOWARD_FOE 9.0f   // x of a cue that runs straight at the other robot
+#define TOWARD_SPAWN 8.0f // x of a cue that runs toward a spawn point (y: which), open floor
 static const Cue script[] = {
 	// The run is long: the slowest bodies need 53 frames to top speed, and a
 	// robot that spawns on an obstacle loses some to the landing off it.
@@ -1282,6 +1311,12 @@ static const Cue script[] = {
 	{ 1500, 1501, 0.0f, 0.0f, KEY_X },    // ...and tackle it, pressed again in
 	{ 1510, 1511, 0.0f, 0.0f, KEY_X },    // case the first press fell in a
 	{ 1520, 1521, 0.0f, 0.0f, KEY_X },    // landing lag (ignored mid-tackle)
+	// Momentum through a weapon: run, then let go of the stick and fire.
+	// Toward a spawn point, which is open floor, so no wall cuts the run.
+	{ GUN_RUN, GUN_PRESS, TOWARD_SPAWN, 0.0f, 0 },
+	{ GUN_PRESS, GUN_PRESS + 1, 0.0f, 0.0f, KEY_B },
+	{ POD_RUN, POD_PRESS, TOWARD_SPAWN, 1.0f, 0 },
+	{ POD_PRESS, POD_PRESS + 1, 0.0f, 0.0f, KEY_L },
 };
 // Last, on arenas with lava: the robot is dropped onto a lava face and the
 // launch, its height and the 50 frames of action 15 are judged.
@@ -1313,6 +1348,21 @@ static void scripted(int t, float* x, float* y, u32* down, u32* held)
 	}
 }
 
+// One speed sliding toward another by the floor rule of groundVelocity, in
+// floor row `row`: the frames that slide (gap over the threshold before the
+// frame's update).
+static int slideFrames(float from, float to, u32 row)
+{
+	const s16* f = floorRow[row < 6 ? row : 0];
+	float thr = 0.02f * f[0] * VEL, k = 0.002f * f[1], v = from;
+	int n = 0;
+	while (fabsf(to - v) > thr && n < 1000) {
+		v += k * (to - v);
+		n++;
+	}
+	return n;
+}
+
 // Readings taken at fixed points of the script, then judged.
 typedef struct {
 	float topSpeed, full, hop, turn, aim, landSpeed;
@@ -1323,10 +1373,18 @@ typedef struct {
 	bool lava;            // the arena has a lava face; dropped on it at LAVA_FROM
 	float lavaY, lavaRise;
 	int lavaTouches, curMagma, magmaRun;
+	// Run, then gun: the run speed, ground speed and floor row before the
+	// press, the speed after the press frame, whether the run speed held
+	// through the volleys, the speed when the recovery zeroed it and the
+	// frames still moving after. Run, then pods.
+	float gunRun, gunBefore, gunFirst, gunLast, podBefore, podMin;
+	u32 gunRow;
+	int gunStop;
+	bool gunRan, gunHeld, gunRecov, gunGround, gunCut, podRan;
 	bool done, pass;
-	char line[11][48];
+	char line[12][48];
 } AutoCheck;
-#define CHECK_LINES 11
+#define CHECK_LINES 12
 
 // The middle of the first lava floor face (kind >> 3 == 1), to drop onto.
 static bool lavaSpot(const Collision* c, float at[3])
@@ -1359,6 +1417,36 @@ static void autoSample(AutoCheck* c, const Robot* r, const Robot* foe, int t, fl
 	// landing skids: count the frames.
 	if (t > 220 && t < 335 && r->sliding && (r->state == ST_GROUND || r->state == ST_LAND)) c->skid++;
 	if (t == 375) c->hop = r->lastJump;
+	float hs = sqrtf(r->vel[0] * r->vel[0] + r->vel[2] * r->vel[2]);
+	if (t == GUN_PRESS - 1) {
+		c->gunRun = r->speed;
+		c->gunBefore = hs;
+		c->gunRow = r->floorKind >> 16 & 0xff;
+		c->gunHeld = true;
+		c->gunGround = r->ground && r->state == ST_GROUND;
+	}
+	// Still sliding when the window closes (the ice takes 100 frames).
+	if (t == POD_RUN - 1) c->gunCut = c->gunRecov && hs > 0.2f * VEL;
+	if (t >= GUN_PRESS && t < POD_RUN) {
+		// The run speed is what robotStep zeroed at the recovery: the gun's
+		// own state has moved on by the time this samples the frame.
+		if (r->state == ST_GUN && r->speed > 0 && !c->gunRecov) {
+			if (!c->gunRan) c->gunFirst = hs;
+			c->gunRan = true;
+			c->gunHeld &= r->speed == c->gunRun;
+			c->gunLast = hs;
+		} else if (c->gunRan && hs > 0.2f * VEL) {   // above the wall-contact residue
+			c->gunRecov = true;
+			c->gunStop++;
+		} else if (c->gunRan) {
+			c->gunRecov = true;
+		}
+	}
+	if (t == POD_PRESS - 1) c->podBefore = hs;
+	if (t >= POD_PRESS && t < POD_PRESS + 10 && r->state == ST_POD) {
+		if (!c->podRan || hs < c->podMin) c->podMin = hs;
+		c->podRan = true;
+	}
 	// Most dashes in one jump: once they are spent the script's further
 	// presses land as new hops, which start the count again.
 	if (t >= 580 && r->dashesThisJump > c->dashes) c->dashes = r->dashesThisJump;
@@ -1409,9 +1497,9 @@ static void autoSample(AutoCheck* c, const Robot* r, const Robot* foe, int t, fl
 	bool dash = c->dashes == p->dashes;
 	bool turn = c->turn > 90.0f && c->aim < 10.0f;
 	bool land = c->lag > 0;
-	// Each skid frame closes 0.002 of the gap; it ends inside 0.02 of the
-	// target (0 during the lag, the stick is neutral after it).
-	int skidWant = c->landSpeed > SLIP_THRESHOLD ? (int)ceilf((c->landSpeed - SLIP_THRESHOLD) / SLIDE_STEP) : 0;
+	// The skid toward rest (0 during the lag, the stick is neutral after
+	// it), by the floor rule on an ordinary floor.
+	int skidWant = slideFrames(c->landSpeed, 0, 0);
 	bool skid = abs(c->skid - skidWant) <= 1;
 	snprintf(c->line[0], 48, "run  %s top %.3f/%.3f", run ? "ok  " : "FAIL", c->topSpeed, p->runSpeed);
 	snprintf(c->line[1], 48, "jump %s %.2f of %.2f, %df", full ? "ok  " : "FAIL", c->full, want, c->fullHeld);
@@ -1457,10 +1545,47 @@ static void autoSample(AutoCheck* c, const Robot* r, const Robot* foe, int t, fl
 	} else {
 		snprintf(c->line[10], 48, "lava --   none in this arena");
 	}
-	c->pass = run && full && hop && dash && turn && land && skid && arms && timeline && tackle && sky && lava;
+	// Run, then gun: the press zeroes the velocity, the floor rule then
+	// pulls it back toward the run speed along the old facing while the
+	// volleys last, and to rest once the recovery zeroes the run speed.
+	// Simulated here by the same rule, for the floor at the press.
+	bool fire = true;
+	{
+		// Judged against what the robot was doing, not an open-floor path: a
+		// wall the run slides along takes the same share of every frame's
+		// velocity. The press frame starts from 0 and closes the floor's
+		// fraction of the gap to the run (wall-limited: gunBefore); the run
+		// speed holds through the volleys; from the recovery the slide to
+		// rest takes the frames the floor rule gives from where it was.
+		// The press frame's target is the run along the facing: the full
+		// run speed x grip on open floor, the speed it was making along a
+		// wall it slides on, so the first frame lies between the two.
+		const s16* f = floorRow[c->gunRow < 6 ? c->gunRow : 0];
+		float k = 0.002f * f[1];
+		float first = k * c->gunBefore, firstOpen = k * c->gunRun * 0.01f * f[2];
+		int stop = slideFrames(c->gunLast, 0, c->gunRow);
+		bool firstOk = c->gunFirst >= first * 0.95f - 1e-4f && c->gunFirst <= firstOpen * 1.05f + 1e-4f;
+		bool stopOk = c->gunCut ? c->gunStop <= stop + 1 : abs(c->gunStop - stop) <= 1;
+		// Fired from the air (the run ended on a ledge) is not this check.
+		bool judged = c->gunRan && c->gunGround;
+		bool gun = !judged || (c->gunRun > 0 && c->gunHeld && firstOk && stopOk);
+		// The pods leave the run alone: over their ten frames the speed does
+		// not drop (stick let go at the press; the ground move's own easing
+		// of the run speed does not run in action 5). Relative, as above.
+		bool pod = !c->podRan || c->podMin >= c->podBefore * 0.9f - 0.2f * VEL;
+		fire = gun && pod;
+		if (judged)
+			snprintf(c->line[11], 48, "fire %s %.3f/%.3f %s %d/%d%s pod %s", fire ? "ok  " : "FAIL", c->gunFirst,
+				firstOpen, c->gunHeld ? "held" : "LOST", c->gunStop, stop, c->gunCut ? "+" : "",
+				!c->podRan ? "n/a" : pod ? "ok" : "FAIL");
+		else
+			snprintf(c->line[11], 48, "fire %s gun n/a (%s) pod %s", fire ? "ok  " : "FAIL",
+				c->gunRan ? "air" : "not fired", !c->podRan ? "n/a" : pod ? "ok" : "FAIL");
+	}
+	c->pass = run && full && hop && dash && turn && land && skid && arms && timeline && tackle && sky && lava && fire;
 #ifdef AUTOTEST_LAVA_ONLY
-	for (int k = 0; k < 10; k++)
-		c->line[k][0] = 0;
+	for (int k = 0; k < CHECK_LINES; k++)
+		if (k != 10) c->line[k][0] = 0;
 	c->pass = c->lava && lava;   // an arena without lava has nothing to pass
 #endif
 	c->done = true;
@@ -1626,7 +1751,9 @@ void battleRun(C3D_RenderTarget* top, const MotionSet* set, const BattleRoster* 
 		hidScanInput();
 		u32 down = hidKeysDown(), held = hidKeysHeld();
 		bool towardFoe = false;   // AUTOTEST: a cue runs straight at the other robot
+		int towardSpawn = -1;     // AUTOTEST: ... or toward this spawn point
 		(void)towardFoe;
+		(void)towardSpawn;
 		circlePosition pad;
 		hidCircleRead(&pad);
 		float sx = abs(pad.dx) > 15 ? pad.dx / 150.0f : 0.0f;
@@ -1671,7 +1798,8 @@ void battleRun(C3D_RenderTarget* top, const MotionSet* set, const BattleRoster* 
 		scripted(scriptT, &sx, &sy, &down, &held);
 		sLavaOn = scriptT >= LAVA_FROM;   // the movement checks run off the lava
 		towardFoe = sx == TOWARD_FOE;
-		if (towardFoe) sx = sy = 0;
+		towardSpawn = sx == TOWARD_SPAWN ? (int)sy : -1;
+		if (towardFoe || towardSpawn >= 0) sx = sy = 0;
 #endif
 		if (down & KEY_START)
 			break;
@@ -1763,6 +1891,21 @@ void battleRun(C3D_RenderTarget* top, const MotionSet* set, const BattleRoster* 
 				float dx = foe->pos[0] - me->pos[0], dz = foe->pos[2] - me->pos[2], l = sqrtf(dx * dx + dz * dz);
 				move[0] = l > 2.0f ? dx / l : 0;   // stop in tackle range
 				move[1] = l > 2.0f ? dz / l : 0;
+			}
+			if (towardSpawn >= 0) {
+				// The direction is fixed at the cue's first frame, so the
+				// run carries on through the spawn point at full speed.
+				static float dir[2];
+				static int cueAt = -1;
+				if (cueAt != autoFrame - 2) {   // not running this cue last frame
+					const float* at = stage.spawn[towardSpawn];
+					float dx = at[0] - me->pos[0], dz = at[2] - me->pos[2], l = sqrtf(dx * dx + dz * dz);
+					dir[0] = l > 1e-3f ? dx / l : 0;
+					dir[1] = l > 1e-3f ? dz / l : 1;
+				}
+				cueAt = autoFrame - 1;
+				move[0] = dir[0];
+				move[1] = dir[1];
 			}
 #endif
 			// A jumps, B fires the gun, R / ZR the bomb (aim with the stick

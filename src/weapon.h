@@ -182,6 +182,8 @@ void arsenalReset(Arsenal* a, const GunStats* gun, const BombStats* bomb, const 
 // Gun: pattern 0 ground, 1 air. Starts the volleys (action 3 at S+0xe2 == 1).
 void gunStart(Arsenal* a, bool air);
 bool gunBusy(const Arsenal* a);
+// In the recovery after the last volley (S+0x20c6 == volley count + 1).
+bool gunRecovering(const Arsenal* a);
 // The shooter was hit: skip to the recovery; deleteShots also clears the
 // bullets in flight (a knockdown by a gun does).
 void gunInterrupt(Arsenal* a, bool deleteShots);

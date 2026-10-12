@@ -101,6 +101,11 @@ void gunStart(Arsenal* a, bool air)
 
 bool gunBusy(const Arsenal* a) { return a->gunState != 0; }
 
+bool gunRecovering(const Arsenal* a)
+{
+	return a->gunState && a->volleys > a->gun->pattern[a->gunState - 1].volleys;
+}
+
 void gunInterrupt(Arsenal* a, bool deleteShots)
 {
 	if (a->gunState) {
