@@ -12,6 +12,7 @@
 #include <string.h>
 #include "collide.h"
 #include "effects.h"
+#include "hud.h"
 #include "model.h"
 #include "render.h"
 #include "weapon.h"
@@ -350,7 +351,10 @@ static void robotSpawn(Robot* r, const float* at, float yaw)
 // A hit, as 0x8004b0a0 reads S+0x18a0 the frame after: HP falls by the
 // damage x body 0x42 / 90 (and by the body's 0x47+kind % of that if already
 // down); the down gauge rises by the hit's down value and the robot
-// staggers -- or, at the body's threshold, is knocked down.
+// staggers -- or, at the body's threshold, is knocked down. A robot already
+// down (0x8004b0a0, the action 14/15 branch) is launched again and its gauge
+// emptied, but its down timer runs on: only a KO (255) rewrites it. So a
+// juggle cannot hold a robot down past the body's 0x46 frames.
 static void robotHurt(Robot* r, const Robot* foe)
 {
 	Hit* h = &r->hit;
@@ -376,7 +380,7 @@ static void robotHurt(Robot* r, const Robot* foe)
 		memcpy(r->pos, h->snapTo, sizeof r->pos);
 	r->skyFire = false;
 	r->anim.aiming = false;
-	bool knock = h->down < 0 || r->hp < 1 || wasDown;
+	bool knock = wasDown || h->down < 0 || r->hp < 1;
 	if (!knock) {
 		r->gauge += h->down;
 		knock = r->gauge >= r->downMax;
@@ -385,9 +389,13 @@ static void robotHurt(Robot* r, const Robot* foe)
 	float speed, angle;
 	if (knock) {
 		r->gauge = 0;
-		r->state = ST_DOWN;
-		r->knockdowns++;
-		r->timer = r->hp < 1 ? 255 : B[0x46 - 0x42];
+		if (!wasDown) {
+			r->state = ST_DOWN;
+			r->knockdowns++;
+			r->timer = B[0x46 - 0x42];
+		}
+		if (r->hp < 1)
+			r->timer = 255;
 		speed = q->launch * B[1] / 1000.0f * VEL;
 		angle = q->launchAngle * DEG;
 		r->gravityNow = 0.006f * q->launchGravity * VEL;
@@ -1214,7 +1222,7 @@ static void scripted(int t, float* x, float* y, u32* down, u32* held)
 typedef struct {
 	float topSpeed, full, hop, turn, aim, landSpeed;
 	int fullHeld, lag, dashes, skid;
-	int curDown, downRun, curReb, rebRun, curInv, invRun, juggleMark;
+	int curDown, downRun, curReb, rebRun, curInv, invRun;
 	bool skyShot, tackleRan;
 	int tackleFrames;
 	bool done, pass;
@@ -1247,13 +1255,12 @@ static void autoSample(AutoCheck* c, const Robot* r, const Robot* foe, int t, fl
 	if (r->state == ST_GUN && r->skyFire) c->skyShot = true;
 	if (r->state == ST_TACKLE) { c->tackleRan = true; c->tackleFrames++; }
 	// The other robot's knockdown timeline, as states run: down, rebirth,
-	// then invulnerable. A hit while down restarts the down time, so a
-	// juggled run is not judged against the body's figure.
+	// then invulnerable. A hit while down does not restart the down time,
+	// so a juggled run is judged against the body's figure too.
 	if (foe->state == ST_DOWN) {
-		if (!c->curDown) c->juggleMark = foe->juggles;
 		c->curDown++;
 	} else if (c->curDown) {
-		c->downRun = foe->juggles == c->juggleMark ? c->curDown : -1;
+		c->downRun = c->curDown;
 		c->curDown = 0;
 	}
 	if (foe->state == ST_REBIRTH) {
@@ -1297,7 +1304,7 @@ static void autoSample(AutoCheck* c, const Robot* r, const Robot* foe, int t, fl
 	// Judged only when a knockdown happened: scenery can shield the other
 	// robot from every shot in some arenas.
 	bool knocked = foe->knockdowns > 0;
-	bool timeline = !knocked || ((c->downRun < 0 || abs(c->downRun - downWant) <= 1)
+	bool timeline = !knocked || (abs(c->downRun - downWant) <= 1
 		&& c->rebRun == 30 && c->invRun >= 59 && c->invRun <= 61);
 	if (knocked)
 		snprintf(c->line[8], 48, "down %s x%d %d/%d reb %d inv %d", timeline ? "ok  " : "FAIL", foe->knockdowns,
@@ -1376,6 +1383,27 @@ static int loadParts(Model* parts, bool* havePart, const BattleRoster* roster, c
 	return ok;
 }
 
+// The nameplate over each robot: player tag, HP and the down gauge, with DOWN
+// or REBIRTH above it while those run. GUESS: it floats 1.5 units over the
+// feet; where the game anchors it is not traced.
+#define HUD_LIFT 1.5f
+static void hudDraw(const Robot* robots, bool cpu, const C3D_Mtx* view)
+{
+	hudBegin();
+	for (int k = 0; k < 2; k++) {
+		const Robot* r = &robots[k];
+		float head[3] = { r->pos[0], r->pos[1] + HUD_LIFT, r->pos[2] }, x, y;
+		if (!r->loaded || !hudProject(view, C3D_AngleFromDegrees(CAM_FOVY), head, &x, &y))
+			continue;
+		int tag = k == 0 ? HUD_TAG_1P : cpu ? HUD_TAG_CPU : HUD_TAG_2P;
+		u32 tint = k == 0 ? 0xff5a5affu : 0xffffa064u;   // 1P red, 2P blue (ABGR)
+		int word = r->state == ST_DOWN ? HUD_WORD_DOWN : r->state == ST_REBIRTH ? HUD_WORD_REBIRTH
+			: HUD_WORD_NONE;
+		hudPlate(x, y, tag, tint, r->hp, r->downMax > 0 ? (float)r->gauge / r->downMax : 0, word);
+	}
+	hudEnd();
+}
+
 void battleRun(C3D_RenderTarget* top, const MotionSet* set, const BattleRoster* roster)
 {
 	Motions mo = { set, { 0 } };
@@ -1394,6 +1422,9 @@ void battleRun(C3D_RenderTarget* top, const MotionSet* set, const BattleRoster* 
 
 	ArenaBounds bounds = { { 0, 0 }, 1e6f };
 	weaponDrawInit();
+	char hudErr[96];
+	if (!hudLoad(hudErr, sizeof hudErr))
+		printf("%s\n", hudErr);
 	sGunfxSetReady = efxSetLoad(&sGunfxSet, "romfs:/gunfx/anim.efx");
 	PartStats stats;
 	bool haveStats = statsLoad(&stats, "romfs:/stats/parts.bin");
@@ -1761,6 +1792,7 @@ void battleRun(C3D_RenderTarget* top, const MotionSet* set, const BattleRoster* 
 			for (int k = 0; k < 2; k++)
 				arsenalDraw(&robots[k].arms, &projection, &view);
 			efxDrawAll(&projection, &view);
+			hudDraw(robots, cpu, &view);
 		}
 		C3D_FrameEnd(0);
 		meterFrames++;
@@ -1788,5 +1820,6 @@ void battleRun(C3D_RenderTarget* top, const MotionSet* set, const BattleRoster* 
 		sGunfxIndex = -1;
 	}
 	weaponDrawFini();
+	hudFree();
 	consoleClear();
 }

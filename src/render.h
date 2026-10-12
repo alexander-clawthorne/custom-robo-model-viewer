@@ -36,3 +36,8 @@ void partMatrix(const Mat34* slot, C3D_Mtx* out);
 // robot's placement in the world.
 void drawRobot(const Model* body, const Mat34* world, const Model* parts, const bool* havePart,
 	const C3D_Mtx* projection, const C3D_Mtx* view);
+
+// 2D overlay: triangles in top-screen pixels (x right, y down), textured and
+// tinted by the vertex colour, drawn over everything. verts must be in linear
+// memory and flushed.
+void drawScreenQuads(C3D_Tex* tex, const ModelVertex* verts, int count);

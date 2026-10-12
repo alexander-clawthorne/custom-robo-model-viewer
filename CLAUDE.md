@@ -11,6 +11,7 @@ python tools/extract_disc.py            # once: disc -> data/ (git-ignored)
 PYTHONUTF8=1 python tools/cook.py       # models -> romfs/ (--only chara:0 snrchara:3 ...)
 PYTHONUTF8=1 python tools/cook_motion.py  # romfs/motion/robot.mot + story.mot
 PYTHONUTF8=1 python tools/stats.py --cook  # romfs/stats/parts.bin (part stats)
+PYTHONUTF8=1 python tools/hud.py          # romfs/hud/battle.bin (battle HUD)
 docker run --rm -v "C:/Users/Alexander/source/repos/custom-robo-3ds:/proj" -w /proj \
   mkw3ds-build:2026-10-09 make          # -> custom-robo-viewer.3dsx
   ... make AUTOTEST=1 TARGET=custom-robo-viewer-autotest BUILD=build3ds_auto
@@ -224,6 +225,14 @@ docker run --rm -v "C:/Users/Alexander/source/repos/custom-robo-3ds:/proj" -w /p
   (0x8004ede4): 240 frames, the winner posing, then 450 of results;
   7200 frames to time up. Not ported: the torso lean while aiming
   (pitch clamped -50..+20), the gun deploy animation, hitstop.
+- Hit on a downed robot (0x8004b0a0, the action 14/15 branch): damage x
+  body 0x47+kind %, relaunched, gauge S+0x144 = 0, but the down timer S+0xe2
+  is NOT reloaded (only a KO sets 0xff), so juggles cannot stun-lock. Both
+  hit tests accept a robot in action 14; only S+0xe6 makes one unhittable.
+- Battle HUD (`tools/hud.py` -> romfs/hud/battle.bin, `src/hud.c`): the
+  nameplate is us_battle.tpl image 40 (backing 44): tag ring (43), HP box
+  (digits 42, 13x14 cells), and the gauge strip holding bar 41 (80x4).
+  Drawn with the model shader as screen-space quads (`drawScreenQuads`).
 
 ## Keeping token use down
 

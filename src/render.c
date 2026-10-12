@@ -144,3 +144,27 @@ void drawRobot(const Model* body, const Mat34* world, const Model* parts, const 
 		drawModelEx(&parts[attach[k].part], projection, view, NULL, &mv, attach[k].root);
 	}
 }
+
+void drawScreenQuads(C3D_Tex* tex, const ModelVertex* verts, int count)
+{
+	// Screen pixels, 400x240 with y down, as citro2d sets up the top screen.
+	C3D_Mtx projection, identity;
+	Mtx_OrthoTilt(&projection, 0.0f, 400.0f, 240.0f, 0.0f, 1.0f, -1.0f, true);
+	Mtx_Identity(&identity);
+	C3D_BufInfo* buf = C3D_GetBufInfo();
+	BufInfo_Init(buf);
+	BufInfo_Add(buf, verts, sizeof(ModelVertex), 4, 0x3210);
+	C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, uProjection, &projection);
+	C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, uModelView, &identity);
+	C3D_FVUnifSet(GPU_VERTEX_SHADER, uLighting, 0.0f, 1.0f, 0.0f, 0.0f);
+	C3D_TexBind(0, tex);
+	C3D_TexEnv* env = C3D_GetTexEnv(0);
+	C3D_TexEnvInit(env);
+	C3D_TexEnvSrc(env, C3D_Both, GPU_TEXTURE0, GPU_PRIMARY_COLOR, 0);
+	C3D_TexEnvFunc(env, C3D_Both, GPU_MODULATE);
+	C3D_AlphaBlend(GPU_BLEND_ADD, GPU_BLEND_ADD, GPU_SRC_ALPHA, GPU_ONE_MINUS_SRC_ALPHA,
+		GPU_SRC_ALPHA, GPU_ONE_MINUS_SRC_ALPHA);
+	C3D_AlphaTest(false, GPU_ALWAYS, 0);
+	C3D_DepthTest(false, GPU_ALWAYS, GPU_WRITE_COLOR);
+	C3D_DrawArrays(GPU_TRIANGLES, 0, count);
+}
