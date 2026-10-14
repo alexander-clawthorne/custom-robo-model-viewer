@@ -207,7 +207,7 @@ docker run --rm -v "C:/Users/Alexander/source/repos/custom-robo-3ds:/proj" -w /p
   effect-spawn joints. Their counts tile exactly against the runtime arrays
   at `0x80377c60`, which is what confirmed the layout.
 - Weapons (`src/weapon.c`, records cooked by `tools/stats.py`; full notes
-  in build/weapons_RE_{gun,bomb_pod,damage}.md, not committed). Actions:
+  in docs/re/weapons_RE_{gun,bomb_pod,damage}.md). Actions:
   3/4/5 gun/bomb/pod on the ground (0x8004949c, 0x800490c8, 0x80048e7c),
   9/10/11 the same in a sky dash, 12 tackle (button 0x40), 13 stagger,
   14 knocked down, 15 magma, 16 rebirth (30 frames + 60 invulnerable via
@@ -262,7 +262,7 @@ docker run --rm -v "C:/Users/Alexander/source/repos/custom-robo-3ds:/proj" -w /p
   (parallel runs: add `-Copy build\ghidra_<name>`; Ghidra locks its project)
   (headless Ghidra 12.1.4 at C:\Tools; needs JAVA_HOME jdk21). REA rejects
   PowerPC, so use Ghidra directly.
-- `build/motion_RE_notes.md` (not committed) has the motion research with
+- `docs/re/motion_RE_notes.md` has the motion research with
   instruction addresses.
 - Keep tool output small: grep decompiles, do not dump whole functions.
 - Compiler (fingerprinted 2026-10-14 against 9 game functions, byte for

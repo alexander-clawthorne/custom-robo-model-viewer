@@ -53,7 +53,7 @@ PREFIX = "[custom-robo-3ds]"
 AUTO = re.compile(r"(fn|lbl|func)_[0-9A-Fa-f]{8}$")
 SYM = re.compile(r"(\S+) = (\.\w+):0x([0-9A-Fa-f]+);(.*)$")
 ADDR = re.compile(r"0x(80[0-9a-fA-F]{6})\b")
-SOURCES = ["CLAUDE.md", "src/*.c", "src/*.h", "tools/*.py", "build/*.md"]
+SOURCES = ["CLAUDE.md", "src/*.c", "src/*.h", "tools/*.py", "docs/re/*.md"]
 
 TYPES = {"s8": (1, 1), "u8": (1, 1), "s16": (2, 2), "u16": (2, 2), "s32": (4, 4), "u32": (4, 4),
          "f32": (4, 4), "void*": (4, 4), "Vec3": (12, 4), "Mtx34": (0x30, 4)}

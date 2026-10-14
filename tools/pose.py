@@ -7,8 +7,8 @@
                           same directions and bend angles with its own limb
                           lengths (the 32 floats in its model file)
 
-Full notes with instruction addresses: build/motion_RE_notes.md (research,
-not committed). The root nodes 23-25 and mirroring follow the game
+Full notes with instruction addresses: docs/re/motion_RE_notes.md. The root
+nodes 23-25 and mirroring follow the game
 (prepare); blending between motions is in src/anim.c only.
 
     python tools/pose.py chara 0 sf_normal_walk build/preview/walk.png [mirror]
