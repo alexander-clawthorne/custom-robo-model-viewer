@@ -274,3 +274,9 @@ docker run --rm -v "C:/Users/Alexander/source/repos/custom-robo-3ds:/proj" -w /p
   Feb 17 2004, SDK 2003 (0x2301). decomp.wtf project: `~/Decomp/main`,
   version GXCE01 (decomp.wtf named it G6A73C from the DOL hash; renamed
   2026-10-14 in the repo and in `~/Decomp/.decomp/decomp.db`, projects.config).
+  Repos: `~/Decomp/main` pushes to `alexander-clawthorne/custom-robo` (PUBLIC,
+  C source only; CI reports to decomp.dev). Its CI pulls the private image
+  from `custom-robo-build` (PRIVATE, holds only main.dol; never make public).
+  `custom-robo-decomp` was a redundant private copy, dropped 2026-10-14.
+  Before each public push, scan the new commits for asm blocks, data dumps
+  or binaries: the public repo must never hold game code or assets.
