@@ -265,3 +265,11 @@ docker run --rm -v "C:/Users/Alexander/source/repos/custom-robo-3ds:/proj" -w /p
 - `build/motion_RE_notes.md` (not committed) has the motion research with
   instruction addresses.
 - Keep tool output small: grep decompiles, do not dump whole functions.
+- Compiler (fingerprinted 2026-10-14 against 9 game functions, byte for
+  byte): mwcc GC/1.3.2-2.7 (all identical at these flags; 1.3 and older
+  and 3.0 fail) with `-opt level=0,peephole,schedule,speed`, NOT the usual
+  `-O4,p`. So every named local sits in its own nonvolatile register even in
+  leaves, dead expressions survive, and tables load via addi/add/lwz 0, not
+  lwzx -- which is why the disassembly reads so literally. Game built
+  Feb 17 2004, SDK 2003 (0x2301). decomp.wtf project: `~/Decomp/main`
+  (from main.dol, so it is called G6A73C, not GXCE01).
