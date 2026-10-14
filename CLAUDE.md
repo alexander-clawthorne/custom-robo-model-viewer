@@ -271,5 +271,6 @@ docker run --rm -v "C:/Users/Alexander/source/repos/custom-robo-3ds:/proj" -w /p
   `-O4,p`. So every named local sits in its own nonvolatile register even in
   leaves, dead expressions survive, and tables load via addi/add/lwz 0, not
   lwzx -- which is why the disassembly reads so literally. Game built
-  Feb 17 2004, SDK 2003 (0x2301). decomp.wtf project: `~/Decomp/main`
-  (from main.dol, so it is called G6A73C, not GXCE01).
+  Feb 17 2004, SDK 2003 (0x2301). decomp.wtf project: `~/Decomp/main`,
+  version GXCE01 (decomp.wtf named it G6A73C from the DOL hash; renamed
+  2026-10-14 in the repo and in `~/Decomp/.decomp/decomp.db`, projects.config).

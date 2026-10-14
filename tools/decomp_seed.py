@@ -462,7 +462,7 @@ def post_notes(slug: str, names, notes, sym_lines, sym_at, report):
 
 def scan(names, notes):
     known = set(names) | {a for a, _, _ in notes}
-    lines, at, _ = read_symbols(DECOMP / "config" / "G6A73C" / "symbols.txt")
+    lines, at, _ = read_symbols(DECOMP / "config" / "GXCE01" / "symbols.txt")
     todo = {a: w for a, w in mentions().items() if a not in known}
     print(f"{len(todo)} main.dol addresses in our sources have no row in decomp_names/decomp_notes:")
     for a, where in sorted(todo.items()):
@@ -474,7 +474,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("cmd", nargs="?", default="apply", choices=["apply", "scan"])
     ap.add_argument("--root", type=Path, default=DECOMP)
-    ap.add_argument("--version", default="G6A73C")
+    ap.add_argument("--version", default="GXCE01")
     ap.add_argument("--slug", default="main", help="decomp.wtf project")
     ap.add_argument("--no-build", action="store_true")
     ap.add_argument("--no-app", action="store_true", help="don't resync decomp.wtf or post notes")
