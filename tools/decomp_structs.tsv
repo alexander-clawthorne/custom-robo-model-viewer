@@ -1,0 +1,269 @@
+struct	HitRecord	28	Incoming hit record at Robot+0x18a0, written by the attacker weapons and consumed by 0x8004b0a0.
+field	HitRecord	0	u8	invuln_export	1 if invulnerable on its last update (read by gun/bomb code)
+field	HitRecord	1	u8	hit_count	incremented per hit written
+field	HitRecord	2	u16	kind	1 gun, 2 bomb, 3 pod, 4 tackle, 5 magma; 0 = nothing pending
+field	HitRecord	4	void*	attacker	attacker robot (last writer)
+field	HitRecord	8	Vec3	dir	knock direction (y unused; z negated)
+field	HitRecord	14	u16	damage	accumulated this frame
+field	HitRecord	16	s16	down	down-gauge add; -1 = always knock down
+field	HitRecord	18	s16	push	stagger knock speed
+field	HitRecord	1a	s16	push_angle	stagger elevation, degrees
+field	HitRecord	1c	s16	flinch	stagger duration, frames
+field	HitRecord	1e	s16	push_gravity	stagger gravity %
+field	HitRecord	20	s16	launch	knock-down launch speed
+field	HitRecord	22	s16	launch_angle	launch elevation, degrees
+field	HitRecord	24	s16	launch_gravity	knock-down gravity %
+field	HitRecord	26	u8	dir_mode	0 use dir vector; else victim pos - attacker pos
+struct	Blast	28	Explosion descriptor shared by bombs (at mode+8) and pods (at record+0x114), with the hit it carries.
+field	Blast	0	u8	bursts	number of bursts
+field	Blast	1	u8	gap	frames between bursts
+field	Blast	2	u16	grow	frames to grow to r1
+field	Blast	4	u16	tail	frames to grow from r1 to r2
+field	Blast	8	f32	r1	radius at end of grow
+field	Blast	c	f32	r2	final radius
+field	Blast	10	f32	height	vertical scale factor
+field	Blast	14	u16	damage	hit damage
+field	Blast	16	s16	down	down value
+field	Blast	18	s16	push	stagger speed
+field	Blast	1a	s16	push_angle	stagger angle deg
+field	Blast	1c	s16	flinch	stagger frames
+field	Blast	1e	s16	push_gravity	stagger gravity %
+field	Blast	20	s16	launch	launch speed
+field	Blast	22	s16	launch_angle	launch angle deg
+field	Blast	24	s16	launch_gravity	launch gravity %
+struct	GunPhase	28	One of five bullet phases in a gun pattern: duration, motion, hit radius and the hit it carries.
+field	GunPhase	0	u16	frames	phase duration in frames
+field	GunPhase	4	f32	speed	world units per frame
+field	GunPhase	8	f32	home_yaw	yaw homing limit, rad/frame
+field	GunPhase	c	f32	home_pitch	pitch homing limit, rad/frame
+field	GunPhase	10	f32	radius	bullet hit radius
+field	GunPhase	14	u8	trail	trail length / linger frames
+field	GunPhase	16	u16	damage	hit damage
+field	GunPhase	18	s16	down	down value
+field	GunPhase	1a	s16	push	stagger speed
+field	GunPhase	1c	s16	push_angle	stagger angle deg
+field	GunPhase	1e	s16	flinch	stagger frames
+field	GunPhase	20	s16	push_gravity	stagger gravity (copied to hit record, unread)
+field	GunPhase	22	s16	launch	launch speed
+field	GunPhase	24	s16	launch_angle	launch angle deg
+field	GunPhase	26	s16	launch_gravity	launch gravity (copied to hit record, unread)
+struct	GunPattern	d8	Ground or air firing pattern of a gun: wind-up, volleys, fan and five bullet phases.
+field	GunPattern	0	u8	windup	wind-up frames after press
+field	GunPattern	1	u8	volleys	number of volleys
+field	GunPattern	2	u8	per_volley	bullets per volley
+field	GunPattern	3	u8	fan_axis	fan axis
+field	GunPattern	4	u8	interval	frames between volleys
+field	GunPattern	5	u8	recovery	recovery frames after last volley
+field	GunPattern	6	s16	cone	spread cone, 65536 = 360 deg
+field	GunPattern	8	u8	fan_phase	phase at which the fan is applied
+field	GunPattern	a	s16	fan_start	fan start angle
+field	GunPattern	c	s16	fan_step	fan step angle
+field	GunPattern	10	GunPhase[5]	phase	bullet phases, zero duration = skipped
+struct	GunStats	28c	Gun part record (table 0x801ca560), copied to Robot+0x1e28.
+field	GunStats	0	u8[32]	name_jp	Shift-JIS name
+field	GunStats	20	u8[32]	name	US name
+field	GunStats	40	u8[32]	bullet_model	bullet model name
+field	GunStats	60	u8[32]	part_model	gun part model name
+field	GunStats	80	u8[32]	hit_effect	hit effect name
+field	GunStats	a0	u8	illegal	illegal-part flag
+field	GunStats	a1	u8	cooldown	ground-only frames after last volley
+field	GunStats	a2	u8	home_mode	0 always home, 1 home only ahead
+field	GunStats	a4	u32	tracer	1 on coloured-tracer guns (unread)
+field	GunStats	dc	GunPattern[2]	pattern	ground, air
+struct	BombMode	50	Ground or air throw descriptor of a bomb.
+field	BombMode	0	u8	aim	cursor placement %, own pos to opponent
+field	BombMode	1	u8	reload	reload frames
+field	BombMode	2	u8	fuse	fuse frames after landing
+field	BombMode	4	u16	speed	x1000 units per frame
+field	BombMode	8	Blast	blast	explosion
+field	BombMode	30	s16[16]	shot	shot[4][4]: side, forward x100, arc height, swing
+struct	BombStats	17c	Bomb part record (table 0x801d4860), copied to Robot+0x28d48.
+field	BombStats	20	u8[32]	name	US name
+field	BombStats	40	u8[32]	blast_label	explosion type label ("Explosion Type R" = type R)
+field	BombStats	a1	u8	count	bombs per throw
+field	BombStats	a2	u16	trigger	proximity trigger radius x100
+field	BombStats	a4	BombMode[2]	mode	ground, air
+struct	PodStats	174	Pod part record (table 0x801d9590), copied to Robot+0x2e2e8.
+field	PodStats	20	u8[32]	name	US name
+field	PodStats	60	u8[32]	blast_label	explosion type label
+field	PodStats	e1	u8	max_out	max pods out at once
+field	PodStats	e2	u8	per_press	pods per press
+field	PodStats	e4	s16	spread	launch spread
+field	PodStats	e6	u16	range_h	detonation range horizontal x100
+field	PodStats	e8	u16	range_v	detonation range vertical x100
+field	PodStats	ea	u16	life	lifetime frames after launch phase
+field	PodStats	ec	s16[2]	yaw_ground	initial yaw [last, first]
+field	PodStats	f0	s16[2]	yaw_air	initial yaw [last, first]
+field	PodStats	f4	u8	lock_on	lock-on enabled
+field	PodStats	f5	u8[2]	gain	steering gain [free, locked]
+field	PodStats	f8	u16[2]	speed	homing speed x1000 [free, locked]
+field	PodStats	fc	u16[2]	hover	hover height x100 [free, locked]
+field	PodStats	100	u16	lock_cone	lock-on cone half-angle deg
+field	PodStats	102	u16	lock_range	lock-on range x100
+field	PodStats	104	s16	pause	pause frames on lock
+field	PodStats	106	s16[2]	elev	launch elevation deg [ground, air]
+field	PodStats	10a	s16[2]	launch_speed	x1000 [ground, air]
+field	PodStats	10e	s16[2]	launch_frames	launch-phase frames [ground, air]
+field	PodStats	112	u8	reflect	wall response: 0 slide, else reflect
+field	PodStats	113	u8	scale_pct	visual scale percent
+field	PodStats	114	Blast	blast	explosion
+struct	BodyStats	134	Body part record (table 0x801c6c44, 34 bodies), copied to Robot+0x1b98.
+field	BodyStats	0	u8[32]	name_jp	Shift-JIS name
+field	BodyStats	20	u8[32]	name	US name
+field	BodyStats	40	u16	down_threshold	down gauge capacity (not HP)
+field	BodyStats	42	u8	damage_pct	damage taken %
+field	BodyStats	43	u8	knockback_pct	knock-back %
+field	BodyStats	44	u8	flinch_pct	flinch time %
+field	BodyStats	45	u8	illegal	illegal-part flag
+field	BodyStats	46	u8	knockdown_frames	knockdown frames
+field	BodyStats	48	u8[4]	juggle_pct	damage % while down, hit kind 1 gun..4 melee
+field	BodyStats	4c	u8	gun_power	gun power %
+field	BodyStats	4d	u8	bomb_power	bomb power %
+field	BodyStats	4e	u8	pod_power	pod power %
+field	BodyStats	4f	u8	gun_recovery	gun recovery %
+field	BodyStats	50	u8[3]	dash_windup	movement stat (min, normal, max)
+field	BodyStats	53	u8[3]	after_dash	movement stat (min, normal, max)
+field	BodyStats	56	u8	dash_type	0 air dash, 1 air jump, 2 sky dash
+field	BodyStats	57	u8	dashes_jump	air dashes per jump when dash_type == 1
+field	BodyStats	58	u16[3]	air_jump	movement stat (min, normal, max)
+field	BodyStats	5e	u8	dashes	air dashes per jump when dash_type is 0 or 2
+field	BodyStats	5f	u8	dash_gun_immune	nonzero: air dash dodges gun hits
+field	BodyStats	60	s8	dash_pitch	dash angle up from horizontal, degrees
+field	BodyStats	61	u8[3]	dash_frames	movement stat (min, normal, max)
+field	BodyStats	64	u16[3]	dash_speed	movement stat (min, normal, max)
+field	BodyStats	6c	s16	steer	sky-dash steering (stat 14)
+field	BodyStats	70	s16[3]	run_speed	movement stat (min, normal, max)
+field	BodyStats	76	s16[3]	run_accel	movement stat (min, normal, max)
+field	BodyStats	7c	s16[3]	turn_rate	movement stat (min, normal, max)
+field	BodyStats	82	s16[3]	jump_height	movement stat (min, normal, max)
+field	BodyStats	88	s16[3]	jump_hold	movement stat (min, normal, max)
+field	BodyStats	8e	s16[3]	air_speed	movement stat (min, normal, max)
+field	BodyStats	94	s16[3]	air_accel	movement stat (min, normal, max)
+field	BodyStats	9a	s16[3]	land_lag	movement stat (min, normal, max)
+field	BodyStats	a0	u16[3]	gravity	movement stat (min, normal, max)
+field	BodyStats	a6	u16	wall_radius	collision radius base x100
+field	BodyStats	a8	u16	wall_centre_pct	sphere A position %, out[2] to out[11]
+field	BodyStats	ac	u16	hit_radius	projectile hit radius x100
+field	BodyStats	ae	u16	hit_centre_low	nonzero: pull hit centre 1/3 toward feet
+field	BodyStats	d0	u8	tackle_armour	bit s = invulnerable in stage s
+field	BodyStats	d1	u8	tackle_ret_mask	stage mask for action return value
+field	BodyStats	d2	s16	tackle_damage	tackle damage
+field	BodyStats	d4	s16	tackle_launch	knock-down launch speed
+field	BodyStats	d6	s16	tackle_angle	launch elevation deg
+field	BodyStats	d8	s16	tackle_turn	homing turn /1000 rad per frame
+field	BodyStats	da	s16[3]	tackle_frames	stage durations
+field	BodyStats	e0	s16[3]	tackle_speed	stage speed, vel = 0.1 * value
+field	BodyStats	e6	s16[3]	tackle_pitch	stage pitch deg
+field	BodyStats	ec	s16	tackle_radius	hit sphere radius /100
+field	BodyStats	ee	s16	tackle_ahead	hit sphere ahead /100
+field	BodyStats	f0	s16	tackle_height	hit sphere height offset /100
+struct	LegStats	8f	Leg part record (table 0x801c952c, 29 legs), copied to Robot+0x33308.
+field	LegStats	0	u8[32]	name	name
+field	LegStats	20	u8[32]	display_name	display name
+field	LegStats	40	u8[32]	label	short label such as speed or grip
+field	LegStats	60	u8[32]	boost_effect	boost effect name
+field	LegStats	80	u8	illegal	illegal-part flag
+field	LegStats	81	u8[14]	pct	percent per movement stat 0-13, 100 = neutral
+struct	GunBullet	1360	One gun bullet slot (32 per robot, from Robot+0x2120).
+field	GunBullet	0	void*	pattern	GunPattern in use
+field	GunBullet	5	u8	state	0 free, 1 flying, 2 dead/trail
+field	GunBullet	8	u16	frame	frames in phase (state 1) or since impact (state 2)
+field	GunBullet	b	u8	hit_mask	players already hit, 1 << n
+field	GunBullet	c	u16	trail_count	trail counter
+field	GunBullet	10	Vec3	pos	position
+field	GunBullet	1c	Vec3	dir	unit direction
+field	GunBullet	28	Vec3[60]	trail	ring buffer of recent positions
+field	GunBullet	34c	void*	victim	target robot
+struct	BombSlot	a78	One bomb slot (8 per robot, from Robot+0x28f00); the explosion state at +0xa8 is not laid out.
+field	BombSlot	4	u8	owner	owner copy
+field	BombSlot	5	u8	state	0 free, 1 flying, 2 landed/fuse, 3 exploding
+field	BombSlot	8	s8	hop	hop counter
+field	BombSlot	c	Vec3	pos	position
+field	BombSlot	18	Vec3	vel	unit direction
+field	BombSlot	24	Vec3	origin	arc origin
+field	BombSlot	30	Vec3	target	arc target
+field	BombSlot	4c	s16	t	arc time
+field	BombSlot	4e	s16	fuse_age	fuse counter / burst age
+field	BombSlot	50	s16	flight	total flight frames
+struct	PodSlot	a60	One pod slot (3 per robot, from Robot+0x2e474); the explosion state at +0x90 is not laid out.
+field	PodSlot	0	u8	state	0 free, 1 flying, 2 exploding
+field	PodSlot	1	u8	owner	owner byte
+field	PodSlot	4	Vec3	pos	position
+field	PodSlot	10	Vec3	vel	velocity, units per frame
+field	PodSlot	1c	Vec3	heading	unit horizontal heading
+field	PodSlot	28	Vec3	prev_pos	previous position
+field	PodSlot	41	u8	locked	locked on
+field	PodSlot	46	s16	life	remaining lifetime frames
+field	PodSlot	50	void*	target	target robot
+struct	Robot	33520	Per-player robot struct S (players at 0x8024e120 + n * 0x33520).
+field	Robot	10	Vec3	vel	velocity, hundredths of a world unit per frame (z negated)
+field	Robot	20	Vec3	pos	world position (feet)
+field	Robot	64	s16	yaw_legs	lower-body yaw, 65536 = 360 deg
+field	Robot	70	f32	hp_max	max HP
+field	Robot	74	f32	hp	HP, 1000 for every body
+field	Robot	e0	s16	timer_init	initial frames of the current action
+field	Robot	e2	s16	timer	frames remaining of the current action
+field	Robot	e4	s16	pending_lag	landing lag owed after an air dash
+field	Robot	e6	u8	invuln	invulnerability frames
+field	Robot	139	u8	air_state	2 airborne, 1 sliding after landing, 0 grounded
+field	Robot	144	s16	down_gauge	down gauge, 0xffff = knocked down
+field	Robot	158	Vec3	aim_v	smoothed aim vector
+field	Robot	164	Vec3	bomb_aim_dir	direction to bomb cursor
+field	Robot	170	Vec3	facing_arm	smoothed 3-D facing
+field	Robot	17c	Vec3	facing_legs	smoothed lower-body facing
+field	Robot	1d0	u16	stage_param	stage-related value
+field	Robot	1d8	u32	flags	state flags (0x2 no look-at, 0x200 KO, 0x40000 tackling, ...)
+field	Robot	1dc	Vec3	hit_centre	projectile hit centre
+field	Robot	238	void*	opponent	opponent robot
+field	Robot	23e	u16	buttons_held	held button mask
+field	Robot	242	u16	buttons_pressed	newly pressed button mask
+field	Robot	8b8	void*[14]	spawn_joints	effect-spawn joints: gun 0-3, bomb 4-5, leg 6-13
+field	Robot	8f0	void*	gun_spawn	gun spawn entry 0 (bullet origin/direction joint)
+field	Robot	8f4	void*	gun_spawn2	gun spawn entry 1
+field	Robot	8f8	void*	bomb_spawn	bomb spawn entry 1 (throw origin joint)
+field	Robot	8fc	void*[4]	leg_spawn	leg dash/boost joints
+field	Robot	90c	void*[14]	part_roots	part root joints: gun 0-1, bomb 2-3, pod 4-7, leg 8-13
+field	Robot	944	void*	gun_root	drawn gun root
+field	Robot	948	void*	bomb_root	drawn bomb root
+field	Robot	1074	Mtx34[20]	out_mtx	solved pose, world matrix per node (rig slot r = out[r+1])
+field	Robot	17f4	f32[30]	dims	per-body dimension floats; word 0 is height
+field	Robot	187c	f32	glow_tackle	tackle armour glow, decays x0.95
+field	Robot	1880	f32	glow_tackle_alt	alt tackle glow (armour bit 8)
+field	Robot	1884	f32	glow_change	button-0x80 glow
+field	Robot	18a0	HitRecord	hit	incoming hit record
+field	Robot	1b98	BodyStats	body	body record copy
+field	Robot	1e28	GunStats	gun	gun record copy
+field	Robot	20d4	f32	gun_deploy	gun deploy ramp 0 to 1, +0.025 per frame
+field	Robot	2120	GunBullet[32]	bullets	gun bullet slots
+field	Robot	28d20	u8	gun_flag_wall	gun id 0x18/0x1a: bullets blocked by walls
+field	Robot	28d21	u8	gun_flag_aim	gun id 0x18: aimed at opponent torso
+field	Robot	28d22	u8	gun_flag_1e	gun id 0x1e flag (effectively unused)
+field	Robot	28d48	BombStats	bomb	bomb record copy
+field	Robot	28ec4	u8	bomb_owner	bomb launcher owner byte
+field	Robot	28ec8	void*	bomb_stick	pointer to the stick vector
+field	Robot	28ecd	u8	bomb_aiming	1 while aiming
+field	Robot	28ece	s16	bomb_reload	reload counter, bomb ready when < 1
+field	Robot	28ed4	Vec3	bomb_cursor	aim cursor
+field	Robot	28ef0	f32	bomb_hud_fade	HUD fade 0 to 1
+field	Robot	28ef4	Vec3	bomb_recoil	negated throw velocity
+field	Robot	28f00	BombSlot[8]	bomb_slots	bomb slots
+field	Robot	2e2c0	u8	bomb_flag_tomahawk	bomb 14: proximity also 1 unit below
+field	Robot	2e2c1	u8	bomb_flag_mine	bomb 28: stops after arc
+field	Robot	2e2c2	u8	bomb_flag_smash	bomb 27: blast at the owner
+field	Robot	2e2c3	u8	bomb_flag_type_r	explosion label is Type R
+field	Robot	2e2e8	PodStats	pod	pod record copy
+field	Robot	2e45c	u8	pod_owner	pod launcher owner byte
+field	Robot	2e468	s8	pods_out	pods currently out
+field	Robot	2e474	PodSlot[3]	pod_slots	pod slots
+field	Robot	332e0	u8	pod_flag_type_r	explosion label is Type R
+field	Robot	332e1	u8	pod_flag_no_early	pod 30: no detonation during launch
+field	Robot	332e2	u8	pod_flag_low	vertical detonation test is one-sided
+field	Robot	33308	LegStats	leg	leg record copy
+field	Robot	3341c	s16[15]	move_stats	body+leg combined movement stats 0-14
+field	Robot	3343c	Vec3	sphere_a	wall sphere A centre
+field	Robot	33448	Vec3	sphere_b	sphere B centre (out[2])
+field	Robot	3346c	Vec3	push	wall/robot push correction accumulator
+field	Robot	33478	f32	sphere_a_r	sphere A radius
+field	Robot	3347c	f32	sphere_b_r	sphere B radius
+field	Robot	33498	u32	floor_kind	kind word of the face underfoot
+field	Robot	334a0	Vec3	conveyor_vel	conveyor/wind velocity

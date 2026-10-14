@@ -1,0 +1,196 @@
+# address<TAB>symbol+offset (when written)<TAB>note. Instructions / fields INSIDE a function or object. Read by tools/decomp_seed.py.
+0x8000332c	__init_registers+0x7c	Sets up register base r2 = 0x804581a0 (small-data) and r13 = 0x804543c0; code uses r2/r13 relative constants.
+0x80003334	__init_registers+0x84	Sets up register base r2 = 0x804581a0 (small-data) and r13 = 0x804543c0; code uses r2/r13 relative constants.
+0x800058dc	input_map_buttons+0x124	Where the 6th mapped button becomes 0x80 only if _DAT_80321d50 == 2 (tag mode), otherwise 0x100.
+0x80005900	input_map_buttons+0x148	Where the 6th mapped button becomes 0x80 only if _DAT_80321d50 == 2 (tag mode), otherwise 0x100.
+0x80005928	input_map_buttons+0x170	Input code keeps held buttons at S+0x23e and new presses (new & ~old) at S+0x242.
+0x8000f8a0	battle_setup_mode0+0xfc	Default time limit setup: 7200 frames for 2 robots, 10800 for 3-4, 5400 otherwise.
+0x8000f8dc	battle_setup_mode0+0x138	Default time limit setup: 7200 frames for 2 robots, 10800 for 3-4, 5400 otherwise.
+0x8001ebc0	motion_eval_keyframes+0x78	Key search: first i with times[i] >= t (fcmpo + cror gt|eq at 0x8001ebe8/ec).
+0x8001ebe8	motion_eval_keyframes+0xa0	Key search: first i with times[i] >= t (fcmpo + cror gt|eq at 0x8001ebe8/ec).
+0x8001ebec	motion_eval_keyframes+0xa4	Key search: first i with times[i] >= t (fcmpo + cror gt|eq at 0x8001ebe8/ec).
+0x8001ec14	motion_eval_keyframes+0xcc	Returns value(code[i]) with no interpolation when times[i] == t or i == 0 (t <= times[0] clamps to first key).
+0x8001ec20	motion_eval_keyframes+0xd8	Returns value(code[i]) with no interpolation when times[i] == t or i == 0 (t <= times[0] clamps to first key).
+0x8001ec6c	motion_eval_keyframes+0x124	Tangent tag 1 (0x4000): tangent 0.0.
+0x8001ecb0	motion_eval_keyframes+0x168	Hermite interpolation between key i-1 (start) and key i (end).
+0x8001ed00	motion_eval_keyframes+0x1b8	Tangent tag 1 (0x4000): tangent 0.0.
+0x8001ed0c	motion_eval_keyframes+0x1c4	Tangent tag 2 (0x8000): tangent T[idx], other 0.
+0x8001ed20	motion_eval_keyframes+0x1d8	Tangent tag 3 (0xC000): shared tangent T[idx], T[idx+1], T[idx+1].
+0x8001ed3c	motion_eval_keyframes+0x1f4	Tangent tag 3 (0xC000): shared tangent T[idx], T[idx+1], T[idx+1].
+0x8001ed44	motion_eval_keyframes+0x1fc	Tangent tag 0: split tangents T[idx], T[idx+1], T[idx+2].
+0x8001ed60	motion_eval_keyframes+0x218	Tangent tag 0: split tangents T[idx], T[idx+1], T[idx+2].
+0x8001eddc	motion_eval_keyframes+0x294	Tangent tag 1 (0x4000): tangent 0.0.
+0x8001ede8	motion_eval_keyframes+0x2a0	Tangent tag 2 (0x8000): tangent T[idx], other 0.
+0x8001edfc	motion_eval_keyframes+0x2b4	Tangent tag 3 (0xC000): shared tangent T[idx], T[idx+1], T[idx+1].
+0x8001ee1c	motion_eval_keyframes+0x2d4	Tangent tag 3 (0xC000): shared tangent T[idx], T[idx+1], T[idx+1].
+0x8001ee28	motion_eval_keyframes+0x2e0	Tangent tag 0: split tangents T[idx], T[idx+1], T[idx+2].
+0x8001ee48	motion_eval_keyframes+0x300	Tangent tag 0: split tangents T[idx], T[idx+1], T[idx+2].
+0x8001ee58	motion_eval_keyframes+0x310	Hermite interpolation body (t0/v0/m0 start key, t1/v1/m1 end key); tangents are per 30 frames.
+0x8001ef40	motion_eval_keyframes+0x3f8	Hermite interpolation between key i-1 (start) and key i (end).
+0x8001ef58	motion_eval_keyframes+0x410	End of the key search loop.
+0x8001ef5c	motion_eval_keyframes+0x414	Reads codes[nkeys], one past the array, when t is past the last time.
+0x80038b7c	fn_800389C8+0x1b4	Reads S+0x1dbc (draw-side flag set by the tackle entry).
+0x80038fb8	fn_80038CF8+0x2c0	Draw code reading the action return value stored in S+0x1c8 (tackle stage mask 0xd1).
+0x80039348	fn_800392B0+0x98	Draw code reading the action return value stored in S+0x1c8 (tackle stage mask 0xd1).
+0x80039fcc	robot_draw_attach_parts+0x20	Draw code reading the action return value stored in S+0x1c8 (tackle stage mask 0xd1).
+0x8003ac98	robot_target_switch+0xf8	Sets S+0x1d8 bit 2 (no look-at) once when the opponent S+0x228 is not in the active-player mask r13-0x4ecc.
+0x8003aca4	robot_target_switch+0x104	Target switch reads S+0x242 (one of the few loaders of the press mask).
+0x8003b7ec	robot_update_all+0x2c4	Mode 2 only: when a robot S+0x242 has 0x80, the partner gets 0x200 OR-ed into its pressed mask (quick recover is tag-only).
+0x8003b850	robot_update_all+0x328	Tag handling reads S+0x242 / S+0x23e.
+0x8003b890	robot_update_all+0x368	Tag handling reads S+0x242 / S+0x23e.
+0x8003b898	robot_update_all+0x370	Mode 2 only: when a robot S+0x242 has 0x80, the partner gets 0x200 OR-ed into its pressed mask (quick recover is tag-only).
+0x8003b9e4	robot_update_all+0x4bc	Reads the tackle armour mask / return value fields (B+0xd0/0xd1) in the player loop.
+0x8003b9f4	robot_update_all+0x4cc	Reads the tackle armour mask / return value fields (B+0xd0/0xd1) in the player loop.
+0x8003ba40	robot_update_all+0x518	Hit centre: 0.5 * (out[2].t + out[11].t) into S+0x1dc..0x1e4, pulled a third toward the feet when body +0xae is set.
+0x8003ba78	robot_update_all+0x550	Hit centre: 0.5 * (out[2].t + out[11].t) into S+0x1dc..0x1e4, pulled a third toward the feet when body +0xae is set.
+0x8003bcb0	robot_update_all+0x788	Tail of the player loop rebuilding the body spheres (S+0x1c3e, S+0x1c40 from body +0xa6/+0xa8).
+0x8003c030	robot_update_all+0xb08	While the tag change e2 < e0 the opponent 8004b0a0 returns at once and its weapon updates are paused here.
+0x8003c07c	robot_update_all+0xb54	Per-attacker call of the tackle hit test 0x800450ec after all players update (skipped in action 18 with e2 < e0).
+0x8003c200	robot_update_all+0xcd8	Per-attacker call of the tackle hit test 0x800450ec after all players update (skipped in action 18 with e2 < e0).
+0x8003c3a0	robot_update_all+0xe78	Second loop calling the aim stage 0x8003c4f0 per robot.
+0x8003c52c	robot_aim_stage+0x3c	Torso pitch clamp to [-0x238e, +0xe38] = [-50, +20] deg.
+0x80041810	gun_bullets_update_hit+0x4b8	Giant and Knuckle Gun only hit with a clear line from the victim centre to the bullet (sweep radius 0.01).
+0x80041914	gun_bullets_update_hit+0x5bc	Writers of the victim hit record H+0x14 (damage accumulate), H+0x16 (down), H+0x18.. (state 2 branch 0x80041914-0x80041ab4, state 1 branch 0x8004204c-0x8004223c).
+0x80041ab4	gun_bullets_update_hit+0x75c	Writers of the victim hit record H+0x14 (damage accumulate), H+0x16 (down), H+0x18.. (state 2 branch 0x80041914-0x80041ab4, state 1 branch 0x8004204c-0x8004223c).
+0x8004204c	gun_bullets_update_hit+0xcf4	Writers of the victim hit record H+0x14 (damage accumulate), H+0x16 (down), H+0x18.. (state 2 branch 0x80041914-0x80041ab4, state 1 branch 0x8004204c-0x8004223c).
+0x8004223c	gun_bullets_update_hit+0xee4	Writers of the victim hit record H+0x14 (damage accumulate), H+0x16 (down), H+0x18.. (state 2 branch 0x80041914-0x80041ab4, state 1 branch 0x8004204c-0x8004223c).
+0x80042a68	fn_800426D4+0x394	Muzzle flash drawn at the muzzle joint world matrix.
+0x80042bbc	gun_fire_volleys+0x104	Fire code: refreshes gun joints with 0x80095a30 then computes muzzle position and bullet direction.
+0x80042bf0	gun_fire_volleys+0x138	Gun id 0x18: bullet direction = normalised (opponent matrix S_t+0x10d4 translation - muzzle) instead of the joint +X.
+0x80042c94	gun_fire_volleys+0x1dc	Gun id 0x18: bullet direction = normalised (opponent matrix S_t+0x10d4 translation - muzzle) instead of the joint +X.
+0x80042d40	gun_fire_volleys+0x288	Fire code: refreshes gun joints with 0x80095a30 then computes muzzle position and bullet direction.
+0x80042ec8	gun_fire_volleys+0x410	Bullet spawn special case for gun id 0x1e.
+0x80042f24	gun_fire_volleys+0x46c	Bullet spawn special case for gun id 0x1e.
+0x80042fa4	gun_fire_volleys+0x4ec	Muzzle flash lasts 10 frames from each shot.
+0x80043648	gun_fire_volleys+0xb90	Only read of G+0x26f02 in the bullet update; value is dead, flag has no effect.
+0x800454c4	hit_tackle+0x3d8	Tackle hit: victim position := attacker position, then += 0.3 * heading.
+0x8004553c	hit_tackle+0x450	Tackle hit: victim position := attacker position, then += 0.3 * heading.
+0x8004aec4	robot_action_move+0x15a0	Store at the tail of action 0 that enters the tackle (action 12).
+0x8004b8fc	robot_physics_update+0x85c	Reads body B+0x40, the down-gauge capacity (not HP).
+0x8004c4a0	robot_physics_update+0x1400	Ground velocity code: target = facing x run speed x floor grip; slides at fraction 0.002 beyond the threshold.
+0x8004c538	robot_physics_update+0x1498	Scales the floor grip.
+0x8004c73c	robot_physics_update+0x169c	Ground velocity code: target = facing x run speed x floor grip; slides at fraction 0.002 beyond the threshold.
+0x8004cd64	robot_physics_update+0x1cc4	Lava: writes the robots own hit record (kind 5, 100 damage, down -1, launch 250 straight up).
+0x80050ec8	fn_80050E74+0x54	Motion player obj (r13-0x4e60 = robotBase+0x6dc).
+0x80050ee4	fn_80050E74+0x70	Reads the robot dims pointer (r13-0x4e7c) from robot data.
+0x80052884	fn_800527D4+0xb0	Blend into a new motion over blendLen frames, f = elapsed / length (inside function 0x800527d4).
+0x80053f28	motion_build_rot_matrices+0x180	Rz / Ry / Rx steps of the M[k] build (angles truncated with fctiwz).
+0x80053f44	motion_build_rot_matrices+0x19c	Rotation multiply idiom with (s,c) from 0x8001f350: Z: col0 = col0*c + col1*s, col1 = col1*c - col0*s.
+0x80053fe8	motion_build_rot_matrices+0x240	Rz / Ry / Rx steps of the M[k] build (angles truncated with fctiwz).
+0x800540b0	motion_build_rot_matrices+0x308	Rz / Ry / Rx steps of the M[k] build (angles truncated with fctiwz).
+0x80054160	motion_build_rot_matrices+0x3b8	Rotation multiply idiom with (s,c) from 0x8001f350: Z: col0 = col0*c + col1*s, col1 = col1*c - col0*s.
+0x8005418c	motion_build_rot_matrices+0x3e4	Stores M[k] to r13-0x4e70 + 0x30k.
+0x8005445c	motion_solve_targets+0x224	Root height scale: if flag 1 is clear, base.y += root.y*(k*scale - 1).
+0x800544a4	motion_solve_targets+0x26c	Root height scale: if flag 1 is clear, base.y += root.y*(k*scale - 1).
+0x80054534	motion_solve_targets+0x2fc	Target position stored as p_local to robot table r13-0x4e70+0x300 (root) and world copy into obj+0xe4.
+0x80054540	motion_solve_targets+0x308	Target position stored as p_local to robot table r13-0x4e70+0x300 (root) and world copy into obj+0xe4.
+0x800545e4	motion_solve_targets+0x3ac	World copy of a target: d = p_local, world = base + (d.x*c + d.z*s, d.y, -d.x*s + d.z*c).
+0x80054648	motion_solve_targets+0x410	World copy of a target: d = p_local, world = base + (d.x*c + d.z*s, d.y, -d.x*s + d.z*c).
+0x8005467c	motion_solve_targets+0x444	Chest target positions (node 3, rot channel 9, robot table +0x310, obj+0xf0).
+0x800549dc	motion_solve_targets+0x7a4	Head target (node 5, channel 15, +0x320, obj+0xfc).
+0x80054d30	motion_solve_targets+0xaf8	Arm1 hand target (node 8, 12 if mirror, channel 24 / mirror 36, +0x330, obj+0x108).
+0x80054e2c	motion_solve_targets+0xbf4	Arm1 hand target (node 8, 12 if mirror, channel 24 / mirror 36, +0x330, obj+0x108).
+0x80055194	motion_solve_targets+0xf5c	Arm2 hand target (node 12, 8 if mirror, channel 36 / mirror 24, +0x340, obj+0x114).
+0x8005528c	motion_solve_targets+0x1054	Arm2 hand target (node 12, 8 if mirror, channel 36 / mirror 24, +0x340, obj+0x114).
+0x800555b0	motion_solve_targets+0x1378	Recomputes the lower-body facing (s,c) for the feet.
+0x80055638	motion_solve_targets+0x1400	Leg1 foot target (node 16, 20 if mirror, channel 48 / mirror 60, +0x350, obj+0x120).
+0x80055730	motion_solve_targets+0x14f8	Leg1 foot target (node 16, 20 if mirror, channel 48 / mirror 60, +0x350, obj+0x120).
+0x80055a98	motion_solve_targets+0x1860	Leg2 foot target (node 20, 16 if mirror, channel 60 / mirror 48, +0x360, obj+0x144).
+0x80055b94	motion_solve_targets+0x195c	Leg2 foot target (node 20, 16 if mirror, channel 60 / mirror 48, +0x360, obj+0x144).
+0x80055ebc	motion_solve_targets+0x1c84	Rotation loop i = 0..25: channel base from byte table 0x801f9d94[i] if 0x801f9b00[i].byte0 & 2.
+0x80055f54	motion_solve_targets+0x1d1c	Each axis * 65536/360, degrees to s16 angle.
+0x80055f60	motion_solve_targets+0x1d28	Each axis * 65536/360, degrees to s16 angle.
+0x80056034	motion_solve_targets+0x1dfc	Rotation loop i = 0..25: channel base from byte table 0x801f9d94[i] if 0x801f9b00[i].byte0 & 2.
+0x80056038	motion_solve_targets+0x1e00	Adds node 24 offset obj+0x180..0x188 into node 1 rotation.
+0x8005620c	motion_root_nodes+0x108	Sets the float table ptr r13-0x4fdc and current frame r13-0x4fd8 from the motion player struct.
+0x8005621c	motion_root_nodes+0x118	Sets the float table ptr r13-0x4fdc and current frame r13-0x4fd8 from the motion player struct.
+0x80056248	motion_root_nodes+0x144	Gate on byte table 0x8032a8c8[robotState+0x6a] for root nodes 23-25.
+0x80056264	motion_root_nodes+0x160	Gate on byte table 0x8032a8c8[robotState+0x6a] for root nodes 23-25.
+0x80056268	motion_root_nodes+0x164	Node 24 (root rotation): each axis * 65536/360 into obj+0x180..0x188.
+0x80056350	motion_root_nodes+0x24c	Node 23 (root translation, x negated if mirror) into obj+0x18c..0x194.
+0x8005642c	motion_root_nodes+0x328	Node 25 into obj+0x198..0x1a0.
+0x800564f8	motion_root_nodes+0x3f4	Root matrix G = Rz*Ry*Rx(n24), G.t = n23 then G*n25; stored to obj+0x1a4.
+0x80056660	motion_root_nodes+0x55c	Rotation multiply idiom with (s,c) from 0x8001f350: Z: col0 = col0*c + col1*s, col1 = col1*c - col0*s.
+0x800566e4	motion_root_nodes+0x5e0	Rotation multiply idiom with (s,c) from 0x8001f350: Z: col0 = col0*c + col1*s, col1 = col1*c - col0*s.
+0x80056878	motion_root_nodes+0x774	Root matrix G = Rz*Ry*Rx(n24), G.t = n23 then G*n25; stored to obj+0x1a4.
+0x8005687c	motion_root_nodes+0x778	Node 0 (X negated if mirror) transformed by the root matrix into obj+0x1d4..0x1dc.
+0x8005695c	motion_root_nodes+0x858	Node 0 (X negated if mirror) transformed by the root matrix into obj+0x1d4..0x1dc.
+0x80056988	motion_root_nodes+0x884	Gate-off path: obj+0x180..0x1a0 = 0, obj+0x1a4 = identity, node 0 untransformed.
+0x80059cc0	motion_solve_legs_pass2+0x530	Foot: orientation is absolute (Ry(lowerYaw) * root rotation * M[foot]), not chained down the leg.
+0x80059fd0	motion_solve_legs_pass2+0x840	Foot: orientation is absolute (Ry(lowerYaw) * root rotation * M[foot]), not chained down the leg.
+0x80059fd4	motion_solve_legs_pass2+0x844	Toe: G *= T(0, D4*s, D5*s) * M[toe].
+0x8005a014	motion_solve_legs_pass2+0x884	Toe: G *= T(0, D4*s, D5*s) * M[toe].
+0x8005a158	motion_solve_arms_pass2+0xbc	Arm pass 2 stages: base, J1, J2 elbow, then hand EFF (handPos stored obj+0x168/0x174).
+0x8005a190	motion_solve_arms_pass2+0xf4	Aim(v) code: X axis -> v via Rz(atan2(v.y,v.x)) * Ry(atan2(-v.z, hypot(v.x,v.y))).
+0x8005a48c	motion_solve_arms_pass2+0x3f0	Arm pass 2 stages: base, J1, J2 elbow, then hand EFF (handPos stored obj+0x168/0x174).
+0x8005a568	motion_solve_arms_pass2+0x4cc	Arm pass 2 stages: base, J1, J2 elbow, then hand EFF (handPos stored obj+0x168/0x174).
+0x8005a5e0	motion_solve_arms_pass2+0x544	Arm pass 2 stages: base, J1, J2 elbow, then hand EFF (handPos stored obj+0x168/0x174).
+0x8005ad9c	motion_solve_arms_pass1+0x2f4	Arm pass 1 two-bone IK: cosA/cosB clamps, stores (-sinA, cosA, sinB, -cosB).
+0x8005ae60	motion_solve_arms_pass1+0x3b8	Arm pass 1 two-bone IK: cosA/cosB clamps, stores (-sinA, cosA, sinB, -cosB).
+0x8005af74	motion_solve_skeleton+0x8c	Mirror flag (r13-0x4e40 bit 2 from robot+0x168 bit 0x40) read.
+0x8005b034	motion_solve_skeleton+0x14c	Calls to 0x80054238 and 0x80053da8 in the skeleton solve.
+0x8005b048	motion_solve_skeleton+0x160	Calls to 0x80054238 and 0x80053da8 in the skeleton solve.
+0x8005b05c	motion_solve_skeleton+0x174	Pass 1 root = T(root_pos) * M[0] -> out[0].
+0x8005b0e8	motion_solve_skeleton+0x200	Pass 1 root = T(root_pos) * M[0] -> out[0].
+0x8005b14c	motion_solve_skeleton+0x264	local(p) = inverse(G) * p.
+0x8005b268	motion_solve_skeleton+0x380	local(p) = inverse(G) * p.
+0x8005b2ac	motion_solve_skeleton+0x3c4	Aim(v) code start (turn local X toward v).
+0x8005b4ec	motion_solve_skeleton+0x604	Aim(v) code: X axis -> v via Rz(atan2(v.y,v.x)) * Ry(atan2(-v.z, hypot(v.x,v.y))).
+0x8005b4f8	motion_solve_skeleton+0x610	Pass 1 spine out[1] = root * M[1] * Aim(dirSpine).
+0x8005b7ac	motion_solve_skeleton+0x8c4	Aim(v) code: X axis -> v via Rz(atan2(v.y,v.x)) * Ry(atan2(-v.z, hypot(v.x,v.y))).
+0x8005ba24	motion_solve_skeleton+0xb3c	Pass 2 head out[2].
+0x8005baac	motion_solve_skeleton+0xbc4	Hips matrix out[11] = T(root_pos) * Ry(lowerYaw) * M[0] * M[9] * Rz(-90).
+0x8005bbec	motion_solve_skeleton+0xd04	Hips matrix out[11] = T(root_pos) * Ry(lowerYaw) * M[0] * M[9] * Rz(-90).
+0x800741b4	fn_80074110+0xa4	Sets the per-robot-type float k (r13-0x4e80 = robot+0xe14) from table 0x8021b080.
+0x8007b958	fn_8007B054+0x904	HUD reads S+0x144 / B+0x40 (down gauge).
+0x800927f4	fn_80092764+0x90	Battle-mode setup dispatch via table 0x801e4800 by byte r13-0x5056.
+0x800f63ec	fn_800F60EC+0x300	VS menu code stores 0x3e8 (1000) as HP in the player setup table.
+0x80101538	gun_deploy_ramp+0x2b4	Gun deploy ramp increment S+0x20d4 += 0.025 per frame.
+0x8010dcd0	fn_8010DBA8+0x128	Resets S+0x20d4 (gun deploy ramp) to 0.0.
+0x80166158	math_atan2_core+0x200	fdiv f1/f2 inside the atan2 core.
+0x801c5bd6	gPlayerSetupTable+0x6	u16 stage-related value copied to S+0x1d0 (arena id 0x1e special in bomb flight; not analysed).
+0x801c5bdc	gPlayerSetupTable+0xc	Per-player starting HP (u16, 1000), 16-byte rows (+0xc).
+0x801c6c04	gMoveTuning+0x4	Float 2.0, gravity base.
+0x801c6c08	gMoveTuning+0x8	Float 6.0, landing impact reference fall of 6 units.
+0x801c6c0c	gMoveTuning+0xc	s16 40, slow sink speed during a sky-dash gun shot.
+0x801c6c0e	gMoveTuning+0xe	s16 60, rebirth invulnerability frames.
+0x801c6c10	gMoveTuning+0x10	s16 4, bomb aim hold frames.
+0x801c6c12	gMoveTuning+0x12	s16 175, bomb cursor speed.
+0x801c6c14	gMoveTuning+0x14	s16 10, pod windup frames.
+0x801c6c16	gMoveTuning+0x16	s16 250, lava launch speed.
+0x801c6c18	gMoveTuning+0x18	s16 50, lava gravity / action 15 down time.
+0x801c6c1a	gMoveTuning+0x1a	s16 100, lava damage.
+0x801c6c1c	gMoveTuning+0x1c	Six floor rows of (threshold, slide step, grip) selected by the face kind.
+0x801c6c34	gMoveTuning+0x34	Constants for the 0x80 tag change move (lockout 420 frames).
+0x801c6c36	gMoveTuning+0x36	Constants for the 0x80 tag change move (lockout 420 frames).
+0x801c6c38	gMoveTuning+0x38	Tag swap HP recovery rate constants (10, 60, 10 at 0x801c6c38/3a/3c).
+0x801c6c3e	gMoveTuning+0x3e	Tag swap HP recovery cap, 150.
+0x801c6c40	gMoveTuning+0x40	Rebirth / get-up related constant.
+0x801f88a4	lbl_801F8894+0x10	Camera mode name strings.
+0x801f9081	gGunEffectTable+0xd	u8 per gun (stride 0x14): max bullets in flight.
+0x801f9b2c	gDefaultSkeleton+0x2c	Default skeleton spine length 0.38.
+0x801f9b40	gDefaultSkeleton+0x40	Default skeleton neck length 0.02.
+0x801f9c30	gDefaultSkeleton+0x130	Default skeleton hip offset 0.22.
+0x801f9d84	gDefaultSkeleton+0x284	Mirror pairs table (6,10) (7,11) (8,12) (9,13) (15,19) (16,20) (17,21) (18,22).
+0x8021bf44	lbl_8021B770+0x7d4	300 char* scenario opcode names, index-aligned with handlers at 0x8021c3f4.
+0x8024e104	gArenaShellCircle+0x4	Arena shell circle centre z.
+0x8024e108	gArenaShellCircle+0x8	Arena shell radius squared, (1.5 * blk0 radius)^2.
+0x8024e10c	gArenaShellCircle+0xc	Float 100.0, no reader found.
+0x8024e140	gRobots+0x20	Not a base: the robot array starts at 0x8024e120 (earlier notes said 0x8024e140).
+0x80321d98	lbl_80321D88+0x10	Battle phase word: 0 intro, 1 ready, 2 fighting, 3 KO, 4 time up, 5 result, 6/7 story continue, 8 post-battle, 9 leave.
+0x8032a5c0	lbl_80329B60+0xa60	Facing global (heading); body facing smooths 0.5 old + 0.5 new each frame.
+0x8032c264	gSweepResult+0x30	Sweep result contact normal.
+0x8032c270	gSweepResult+0x3c	Sweep result surface flags (0x40 bit checked by bombs and pods).
+0x8032c274	gSweepResult+0x40	Sweep result surface flags (0x40 bit checked by bombs and pods).
+0x8032c284	gSweepResult+0x50	Sweep result block index.
+0x8032c298	lbl_8032C288+0x10	Floor query result +0x10: face kind word (kind >> 3 == 1 is lava).
+0x803756a8	gCollisionData+0xc	Block 0 header pointer (arena shell): centre[3], radius, face_count, flags.
+0x80377c58	gCollisionData+0x25bc	Byte set at stage load that is GUESSED to gate conveyors; taken as on in every battle.
+0x80377c68	gPartRootArrays+0x8	Part root / spawn-joint arrays: bomb 0x80377c68, pod 0x80377c70, leg 0x80377c80; spawn joint arrays gun 0x80377ca8, bomb 0x80377cb8, leg 0x80377cc0.
+0x80377c70	gPartRootArrays+0x10	Part root / spawn-joint arrays: bomb 0x80377c68, pod 0x80377c70, leg 0x80377c80; spawn joint arrays gun 0x80377ca8, bomb 0x80377cb8, leg 0x80377cc0.
+0x80377c80	gPartRootArrays+0x20	Part root / spawn-joint arrays: bomb 0x80377c68, pod 0x80377c70, leg 0x80377c80; spawn joint arrays gun 0x80377ca8, bomb 0x80377cb8, leg 0x80377cc0.
+0x80377ca8	gPartRootArrays+0x48	Part root / spawn-joint arrays: bomb 0x80377c68, pod 0x80377c70, leg 0x80377c80; spawn joint arrays gun 0x80377ca8, bomb 0x80377cb8, leg 0x80377cc0.
+0x80377cb8	gPartRootArrays+0x58	Part root / spawn-joint arrays: bomb 0x80377c68, pod 0x80377c70, leg 0x80377c80; spawn joint arrays gun 0x80377ca8, bomb 0x80377cb8, leg 0x80377cc0.
+0x80377cc0	gPartRootArrays+0x60	Part root / spawn-joint arrays: bomb 0x80377c68, pod 0x80377c70, leg 0x80377c80; spawn joint arrays gun 0x80377ca8, bomb 0x80377cb8, leg 0x80377cc0.
+0x804543c0	lbl_80452ABC+0x1904	r13 small-data base register value (set at 0x80003334).
+0x804581a0	lbl_80452ABC+0x56e4	r2 small-data base register value (set at 0x8000332c); float constants are at r2 - offset.

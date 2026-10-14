@@ -1,0 +1,143 @@
+# address<TAB>name<TAB>meaning. Functions/data that START at the address. name "-" = known role but
+# not enough for a name: posted as a note, symbol left alone. Read by tools/decomp_seed.py.
+0x800057b8	input_map_buttons	Input mapper: turns the 6th mapped button into 0x80 (tag change) only in tag mode (mode 2), else 0x100 (target switch); keeps held at S+0x23e, new presses at S+0x242.
+0x80005b88	-	Idle dispatcher the old robot becomes after a tag-battle robot swap.
+0x80005bc8	-	Zeroes robot input unless the battle phase is 2 (fighting).
+0x80005da4	part_build_robot	Robot builder: copies the indexed body/gun/bomb/pod/leg records whole into the robot struct S and inits HP from the player setup table.
+0x80006658	part_combine_stats	Combines body and leg records into the 15 s16 movement stats at S+0x3341c (body min/normal/max triple per stat, leg percentage picks along it).
+0x80007ce4	part_pick_muzzles	Copies part root and effect-spawn joint pointers into S (S+0x8f0 gun muzzle entry 0, S+0x8f8 bomb entry 1, S+0x944 = S+0x90c = gun root 0).
+0x8000f7a4	battle_setup_mode0	Battle-mode setup for mode 0 (VS 1v1, 2 robots); default time limit 7200 frames; one of the functions in the table at 0x801e4800.
+0x80010220	battle_main_loop	Battle main loop: switch on phase word 0x80321d98 (intro, ready, fighting, KO, time up, results, ...); also sets 0x8024e100 circle from collision block 0.
+0x8001ca84	math_vec3_normalize	Normalises a vec3 (used on the facing/aim direction D before smoothing).
+0x8001d694	gmtx_pop	Pops the global matrix G from the matrix stack (stack pointer r13-0x4fe0).
+0x8001d814	gmtx_push	Pushes the global matrix G onto the matrix stack (stack pointer r13-0x4fe0).
+0x8001da70	gmtx_scale_axes	Scales each axis of G separately; looks like a rotation but is not (not what mounts parts).
+0x8001daf8	gmtx_identity	Writes the identity matrix to *r3.
+0x8001db5c	gmtx_translate_xz	G.t += G.col0*f2 + G.col2*f1 (local (f2,0,f1)).
+0x8001dbf0	gmtx_translate_yz	G.t += G.col1*f1 + G.col2*f2 (local (0,f1,f2)).
+0x8001dc84	gmtx_translate_z	G.t += G.col2*f1 (translate along local Z).
+0x8001dd1c	gmtx_translate_x	G.t += G.col0*f1 (translate along local X).
+0x8001de6c	gmtx_xform_point	*r3 := G * (*r4), a point transformed with translation.
+0x8001df6c	gmtx_load	G := *r3.
+0x8001e054	gmtx_store	*r3 := G (same effect as 0x8001e0d0).
+0x8001e0d0	-	*r3 := G (same effect as 0x8001e054).
+0x8001e134	gmtx_mul	G := G * (*r3), post-multiply.
+0x8001e424	math_vec3_length	Length of a vec3.
+0x8001e684	math_swap_f32	Swaps two floats.
+0x8001eb48	motion_eval_keyframes	Keyframe evaluator float eval(u16* times, u16* codes, int nkeys): cubic Hermite per channel, per-key tags pick tangents, t <= times[0] clamps to first key.
+0x8001f060	math_atan2_s16	atan2 returning an s16 angle (65536 = 360 deg).
+0x8001f350	math_sincos_s16	s16 binary angle (65536 = 360 deg) -> sin to r4, cos to r5.
+0x8001f428	math_cos_s16	cos(a) for an s16 angle.
+0x8001f4c0	math_sin_s16	sin(a) for an s16 angle.
+0x8002b3c4	cam_fit_robots	Camera fit: fits every robot inside planes 25.2 either side and 20 below / 10 above the view axis (padded 0.85 / 0.546 x 1.9 for two robots, min 5.7 away).
+0x8002e04c	cam_blend	Blend toward the fitted camera with factor 1.0, so it snaps every frame.
+0x800333dc	cam_result_init	Init of the RESULT camera mode (not the battle camera).
+0x80035bcc	cam_battle_update	Update of camera mode 2 (CAMMODE_MIDDLE, the battle camera): calls the fit 0x8002b3c4 and the blend 0x8002e04c.
+0x800381d0	gun_bullet_fx_matrix	Builds the matrix of the gun effect model 0 for each flying bullet.
+0x80039fac	robot_draw_attach_parts	Robot draw code: copies solved matrix out[k] into a weapon part root world matrix, sets USER_DEF_MTX|INDEPEND_PARENT|INDEPEND_SRT (0x3800000), basis scaled 0.1.
+0x8003aba0	robot_target_switch	Target switch on input 0x100: cycles S+0x238 / S+0x228 among enemies.
+0x8003b528	robot_update_all	Per-frame battle player loop: pose solve, aim stage, action, 0x8004b0a0, weapon updates, hit tests (0x80041358 bullets, 0x800443c0 blasts, 0x800450ec tackle).
+0x8003c4f0	robot_aim_stage	Aim stage per robot: torso pitch clamp [-50,+20] deg and arm aim targets, ends in the IK re-solve 0x80058ad0.
+0x8003d7e0	pod_launch	Pod launch: sets each pod yaw/spread at launch (first Double Wave Pod goes left).
+0x8003dd38	pod_update	Per-frame pod flight update (steering, homing, hover on a spring).
+0x8003f048	pod_init	Pod init: sets per-pod flags from the pod index (30 Umbrella, list at 0x801f9980 for vertical detonation test).
+0x8003f248	bomb_aim_throw	Bomb launch/aim: forward is the launcher joint +X flattened; mode 0 ground, 1 air.
+0x8003fe98	bomb_update	Bomb update: aim cursor, parametric arc flight, landing.
+0x80041140	bomb_init	Bomb init: sets per-bomb flags from the bomb index (14 Tomahawk, 28 Double Mine).
+0x80041358	gun_bullets_update_hit	Per-frame bullet update and bullet-vs-victim hit test (capsule against victim sphere, writes the victim hit record).
+0x80042ab8	gun_fire_volleys	Gun weapon update: volleys, bullet spawn at the muzzle, fan/spread rotation, cooldown and recovery timers.
+0x80044174	gun_init	Gun init: special ids (0x1a/0x18 set G+0x26f00 no-wall hits, 0x18 aims at opponent, 0x1e flag).
+0x800443c0	hit_blasts	Blast (bomb and pod explosion) hit test run per state-3 slot, writes the victim hit record.
+0x80044a90	blast_update	Blast step: ages and lays out the explosion bursts.
+0x80044ea4	blast_init	Blast init for bombs and pods.
+0x800450ec	hit_tackle	Tackle hit test (hit type 4): stage 1 only, sphere ahead of the hit centre, once per tackle.
+0x80045ce8	robot_action_magma	Action 15: magma bounce, down 50 frames, plain fall, steers like a jump, motion sf_fall_magma.
+0x80045fec	robot_action_knockdown	Action 14: knocked down; reads S+0x242/S+0x23e (quick recover 0x200).
+0x800468b8	robot_action_stagger	Action 13: stagger (hit stun).
+0x80046a68	robot_action_tackle	Action 12: tackle (button 0x40), staged; sets S+0x1d8 0x40000 each frame so the robot push skips it.
+0x80046f58	robot_action_pod_skydash	Action 11: pod fired while sky-dashing.
+0x8004752c	robot_action_bomb_skydash	Action 10: bomb fired while sky-dashing (held input).
+0x80047ac0	robot_action_gun_skydash	Action 9: gun fired while sky-dashing.
+0x80048050	robot_action_skydash	Action 8: sky dash (dash type 2), steerable flight.
+0x80048708	robot_action_airdash	Action 7: air dash (dash type 0), a straight line.
+0x80048b10	robot_action_airjump	Action 6: air jump (dash type 1), a second jump straight up.
+0x80048e7c	robot_action_pod	Action 5: pod on the ground.
+0x800490c8	robot_action_bomb	Action 4: bomb aim/throw (ground or air); sets S+0x164 aim toward the bomb cursor.
+0x8004949c	robot_action_gun	Action 3: gun on the ground.
+0x80049924	robot_action_move	Action 0: the movement update (run, jump, weapon presses, air dash press, tackle).
+0x8004b0a0	robot_physics_update	Per-robot gravity, landing, position update and hit-record handling (reads last frame S+0x18a0), floor/lava/conveyor.
+0x8004ede4	battle_win_check	Per-frame win check: KO and time up handling, runs before the robots update.
+0x8004ff64	battle_win_check_mode1	Win check for battle mode 1 (free-for-all).
+0x80050388	battle_win_check_mode0	Win check for battle mode 0 (1v1).
+0x80050f08	motion_set_context	Sets the motion context: obj = S+0x53c, R = S+0x70.
+0x80050f90	motion_blend_rotation	Rotation blend: lerps two rows, rebuilds an orthonormal basis with cross products (transition blend path).
+0x80053a20	motion_mirror_rotations	Mirrors rotations (swaps/negates y,z per partner node, 180 - angle).
+0x80053da8	motion_build_rot_matrices	Builds M[k] = Rz*Ry*Rx for k = 0..15 from node rotations (degrees -> s16 angles).
+0x80054238	motion_solve_targets	Computes target positions and all rotations from channels, applies mirror, upper-body yaw, root height scale.
+0x80056104	motion_root_nodes	Root nodes 23, 24, 25 and pelvis node 0, gated by byte table 0x8032a8c8[robotState+0x6a].
+0x80058ad0	motion_aim_resolve	IK re-solve of spine/head/arms from the aim-modified targets, called at the end of the aim stage.
+0x80059790	motion_solve_legs_pass2	Leg pass 2: builds out[12..19] from hips on the robot own dimensions; foot orientation is absolute.
+0x8005a09c	motion_solve_arms_pass2	Arm pass 2: arm1 -> out[3..6], arm2 -> out[7..10] with robot dimensions.
+0x8005a668	motion_solve_legs_pass1	Leg pass 1 on the default skeleton: hip, local foot target, thigh/shin angles.
+0x8005aaa8	motion_solve_arms_pass1	Arm pass 1 on the default skeleton: IK angles for each arm.
+0x8005aee8	motion_solve_skeleton	Two-pass skeleton solve: pass 1 IK on default skeleton (0x801f9b00), pass 2 rebuilds with robot dims; writes out[] = S+0x1074.
+0x8005cf0c	coll_conveyor_vector	Conveyor: face kind low byte 0x18-0x1c picks one of five vectors at 0x801c0a28 added to the move.
+0x8005d068	coll_floor_row	Floor row from the face kind, (kind >> 16) & 0xff, into six rows at 0x801c6c1c.
+0x8005d08c	coll_sweep_sphere	Sphere sweep along a move that stops at the first hit; skips blocks with flag 0x80; also used for line-of-sight sweeps.
+0x8005d338	-	Second collision sweep next to 0x8005d08c; also honours block flag 0x80.
+0x8005e270	coll_test_faces	Per-face test used by the collision sweeps.
+0x80061be8	coll_sphere_walls	Sphere A against the walls (push moves the robot).
+0x8006207c	coll_floor_query	Downward floor query; copies the face kind word into the hit record.
+0x80062ff4	robot_build_spheres	Rebuilds the body spheres each frame (A for walls/robot push, B at out[2]) from body +0xa6/+0xa8.
+0x800633bc	robot_push_pair_core	Core of the robot-vs-robot push; moves both apart by half the overlap each.
+0x80063da4	robot_push_other	Robot-vs-robot push per player, calls 0x800633bc before the wall sweep; skipped if either has S+0x1d8 0x40000.
+0x8006b848	-	Rewrites the collision trailing section, runtime scratch array of 0x284-byte records, every frame.
+0x80072064	coll_init_block	Per-block init of loaded collision.
+0x80072a58	coll_parse	Collision parser: stores block header offset array at 0x8037569c+0xc.
+0x80073cb8	part_load	Part loader: walks the two path lists (header word 4 per-root paths, word 8 effect-spawn joint paths; 02 = child, 01 = next).
+0x80074dcc	motion_load_bank	Motion loader: reads the ID list, fills pointer table 0x8032adc8 and gate table 0x8032a8c8 (bank ID bit 15).
+0x80075950	battle_load_assets	Battle loader: loads gun_effect.BIN entry = gun id (loadout at 0x801c5bd0) and other battle assets.
+0x8007ab14	-	Draws the HP bar.
+0x8007dd14	hud_show_banner	Shows a battle banner: (1, 0xd2) KO, (8, 0x78) time up.
+0x80095700	hsd_jobj_apply_anim	Applies JObjAnim then requests the frame (apply lags one call); used for the gun deploy animation.
+0x80095a30	hsd_jobj_update_matrices	Walks the JObj tree and calls HSD_JObjSetupMatrixSub for joints with flag 0x40 (dirty) and not 0x800000; not an animator.
+0x80096ebc	-	Screen fade call, e.g. fade(0, 30) after a KO.
+0x800a0e64	debug_motion_viewer	The game debug motion viewer; prints motion names from 0x80206db0.
+0x80101284	-	Ramps S+0x20d4 from 0 to 1 at +0.025/frame (gun deploy animation, 10-frame anim over 40 frames).
+0x80165f58	math_atan2_core	atan2(y = f1, x = f2) body; fdiv at 0x80166158.
+0x801690c8	math_atan2	atan2 wrapper (calls 0x80165f58); used for gun pitch homing.
+0x80169424	math_sqrt	Square root.
+0x801bcac8	gCamFitPadding	Battle camera fit padding: 0.85 sideways and 0.546 vertically, x 1.9 with two robots.
+0x801c0a28	gConveyorVectors	Five conveyor velocity vectors (z -2.2, -2.2, 2.2, 6, -6) added to the move on conveyor faces.
+0x801c51b8	gBodyMotionTables	Per-body motion index tables (u16 entries, bit 15 -> S+0x85b), stride 0x4c per body; Ray first.
+0x801c5bd0	gPlayerSetupTable	16-byte per-player setup table (+0xc u16 = starting HP 1000; loadout ids such as the gun id at +4).
+0x801c5c10	gBodyDimensions	Per-body dimensions, 30 floats stride 0x78, copied to S+0x17f4; word 0 height, word 2 motion table pointer.
+0x801c6c00	gMoveTuning	Block of mixed s16/float tuning constants: 900 damage divisor, floats 2.0 / 6.0, lava and rebirth constants, floor rows at +0x1c.
+0x801c6c44	gBodyStats	Body record table, 0x134 bytes x 34, copied to S+0x1b98.
+0x801c952c	gLegStats	Leg record table, 0x8f bytes x 29, copied to S+0x33308.
+0x801ca560	gGunStats	Gun record table, 0x28c bytes x 64, copied to S+0x1e28.
+0x801d4860	gBombStats	Bomb record table, 0x17c bytes x 52, copied to S+0x28d48.
+0x801d9590	gPodStats	Pod record table, 0x174 bytes x 57, copied to S+0x2e2e8.
+0x801e4800	gBattleModeSetupTable	Battle-mode setup function table, indexed by byte r13-0x5056 (dispatch at 0x800927f4).
+0x801e6580	gSinTable	Rising quarter sine table (0, 0, 0.001536 ... 1.0 at index 1024) for s16 angles.
+0x801f7ff0	gCameraModes	Camera modes, an (init, update) pair per mode; names at 0x801f88a4.
+0x801f8eb8	gActionTable	Robot action function table indexed by S+0x528.
+0x801f9074	gGunEffectTable	Per-gun table stride 0x14: effect id, impact effect 0x30007, kind, max bullet slot count at +0xd.
+0x801f9980	gPodVerticalDetonateList	u16 list of pod ids {0,3,6,9,12,18,23,25,26,27} with a one-sided vertical detonation test.
+0x801f9b00	gDefaultSkeleton	Built-in default skeleton: 26 x 0x14-byte records (+4/+8/+0xc = x/y/z offset), used by pose solve pass 1.
+0x801f9d94	gSkeletonChannelBase	Byte table of channel base per rotation node, indexed by node i.
+0x80206db0	gMotionNameTable	Motion name records, 12 bytes each, indexed by motion ID.
+0x8021b080	gRobotTypeHeightScale	Per-robot-type float used for root height scaling (robot 0 = 0.931).
+0x8021c3f4	gScrOpcodeHandlers	300 scenario script opcode handlers, index-aligned with the opcode name pointers at 0x8021bf44.
+0x8024e100	gArenaShellCircle	Arena shell circle from collision block 0: centre x, centre z, radius squared (1.5 x radius)^2, then 100.0.
+0x8024e120	gRobots	Robot structs, 0x33520 bytes apart (player n at +n*0x33520).
+0x8031fe68	gGlobalMtx	Global current 3x4 matrix G used by the gmtx_ helpers.
+0x8032a5f4	gTackleMaskAll	Tackle victim mask table indexed by S+0x8c, used for everybody else when flag 0x100 of _DAT_80321d40 is set.
+0x8032a604	gTackleMaskEnemyTeam	Tackle victim mask table indexed by S+0x8d (enemy team).
+0x8032a8c8	gMotionRootGate	Byte gate table indexed by robotState+0x6a: whether root nodes 23-25 apply.
+0x8032adc8	gMotionPtrTable	Motion pointer table filled by the motion loader 0x80074dcc.
+0x8032c234	gSweepResult	Sphere sweep result struct (normal at +0x30, surface flags at +0x3c/+0x40, block index at +0x50).
+0x8037569c	gCollisionData	Loaded collision state; block header pointer array at +0xc (0x803756a8 = block 0).
+0x80377c60	gPartRootArrays	Runtime part root arrays (gun 0x80377c60+p*0x80, bomb +8, pod +0x10, leg +0x20), spawn-joint arrays at 0x80377ca8...
+0x8044f3e4	gMotionFloatTablePtr	Pointer (r13-0x4fdc) to the float table the keyframe evaluator reads; set by 0x80056104.
+0x8044f348	gCurRobot	Robot* to the robot being updated (r13-0x5078): robot_update_all 0x8003b528 sets it to gRobots + i*0x33520 (0x8003b5b4) before running its action; actions read every Robot field through it.
