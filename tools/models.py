@@ -127,10 +127,27 @@ def rpg_models(archive):
     """Just the field/town models, in archive order."""
     return [b for _, ident, b in rpg_parts(RPG_ARCHIVES[archive]) if ident >> 16]
 
+FOOT_SLOTS = (13, 17)  # rig slots of the two feet, in the 19 tree paths
+
+def foot_joints(blob, d, root):
+    """Offsets of a body's foot joints, by following its rig paths (pose.rig)."""
+    paths = blob[struct.unpack_from('>12I', blob, 0)[8]:].split(b'\xff')[:19]
+    feet = set()
+    for slot in FOOT_SLOTS:
+        off = root
+        for c in paths[slot]:
+            off = d.ptr(off + 8) if c == 2 else d.ptr(off + 12)
+        feet.add(off)
+    return feet
+
 def load_model(archive, index=0):
+    absolute = ()
     if archive in ROBO_ARCHIVES:
-        d = hsd.read_robo(entry(ROBO_ARCHIVES[archive], index))
+        blob = entry(ROBO_ARCHIVES[archive], index)
+        d = hsd.read_robo(blob)
         roots = list(d.roots.values())
+        if archive not in PART_ARCHIVES:
+            absolute = foot_joints(blob, d, roots[0])
     elif archive in SCENE_ARCHIVES:
         name, stride = SCENE_ARCHIVES[archive]
         d = hsd.read_hsd(entry(name, index * stride))
@@ -155,7 +172,7 @@ def load_model(archive, index=0):
         raise ValueError(archive)
     joints, meshes = [], []
     for model, root in enumerate(roots):
-        j, m = hsd.read_meshes(d, root, mount=archive not in PART_ARCHIVES)
+        j, m = hsd.read_meshes(d, root, mount=archive not in PART_ARCHIVES, absolute=absolute)
         for mesh in m:
             mesh['model'] = model
         if archive in EFFECT_ARCHIVES:

@@ -214,6 +214,13 @@ def rig(archive, index):
     paths = blob[h[8]:].split(b'\xff')[:19]
     return dims, paths
 
+def inverse_bind(j):
+    """4x4 inverse bind: the file's where it stores one (the game skins with it,
+    and some bodies' stored joint rotations are not that pose), else the built one."""
+    if j.inv_bind is None:
+        return np.linalg.inv(np.array(j.world))
+    return np.vstack([j.inv_bind, [0.0, 0.0, 0.0, 1.0]])
+
 def posed_meshes(archive, index, motion, frame, scale=1.0, mirror=False):
     d, joints, meshes = load_model(archive, index)
     dims, paths = rig(archive, index)
@@ -238,8 +245,7 @@ def posed_meshes(archive, index, motion, frame, scale=1.0, mirror=False):
             x = parent[:3, 0] / (np.linalg.norm(parent[:3, 0]) or 1)
             m[:3, 3] = parent[:3, 3] + x * joints[j.parent].bone_length
         world[j.index] = m
-    bind = [np.array(j.world) for j in joints]
-    inv_bind = [np.linalg.inv(b) for b in bind]
+    inv_bind = [inverse_bind(j) for j in joints]
     posed = []
     for mesh in meshes:
         tris = []

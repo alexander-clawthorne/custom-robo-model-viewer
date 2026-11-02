@@ -220,9 +220,15 @@ class Joint:
         self.rot, self.scale, self.trans = d.vec3(off + 0x14), d.vec3(off + 0x20), d.vec3(off + 0x2C)
         self.ik = ik_type(d, off)
         self.bone_length = bone_length(d, off) if d.ptr(off + 0x3C) is not None else 0.0
+        # Stored inverse bind (3x4), what the envelope vertices were modelled against.
+        m = d.ptr(off + 0x38)
+        self.inv_bind = None if m is None else [list(struct.unpack_from('>4f', d.data, m + 16 * r)) for r in range(3)]
 
-def walk_joints(d, root, mount=True):
+def walk_joints(d, root, mount=True, absolute=()):
     """All joints of a JObj tree, depth first, with bind-pose world matrices.
+    Joints in `absolute` (offsets) take the identity rotation instead of chaining
+    theirs: a robot's feet, whose orientation the game's pose solve (0x80059cc0)
+    sets absolutely, so what the file stores on them never reaches the screen.
     mount=False drops the top-level joint's local matrix entirely. A weapon
     part stores there the rotation (and sometimes the offset) it is mounted
     at on the robot; the game never uses that joint's own SRT -- it writes
@@ -238,6 +244,8 @@ def walk_joints(d, root, mount=True):
                 world = IDENTITY
             else:
                 world = mat_mul(parent_world, local(d, off))
+            if off in absolute:
+                world = [[float(i == k) for k in range(3)] + [world[i][3]] for i in range(3)] + [list(world[3])]
             parent = by_off[parent_off].index if parent_off is not None else -1
             j = Joint(d, off, world, len(joints), parent)
             joints.append(j); by_off[off] = j
@@ -295,9 +303,9 @@ def envelopes(d, at):
 # (tools/preview.py); 'model' leaves them untouched, 'joint' applies the joint.
 SINGLE_ENVELOPE = 'model'
 
-def read_meshes(d, root, mount=True):
+def read_meshes(d, root, mount=True, absolute=()):
     """Bind-pose triangles per DObj, with its material."""
-    joints, by_off = walk_joints(d, root, mount)
+    joints, by_off = walk_joints(d, root, mount, absolute)
     meshes = []
     for j in joints:
         if j.flags & 0x4030:  # JOBJ_SPLINE / JOBJ_PTCL reuse the DObj slot; 0x10 hidden

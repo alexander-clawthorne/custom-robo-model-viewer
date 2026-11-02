@@ -493,6 +493,11 @@ void animPose(const Model* model, const MotionSet* set, const Motion* m, float f
 			world[i] = mul(&world[j->parent], &local);
 		else
 			world[i] = local;
+		// Bind pose: feet are absolute here too (see solve), whatever the file stores.
+		if (model->hasRig && ((s16)i == model->slots[13] || (s16)i == model->slots[17]))
+			for (int r = 0; r < 3; r++)
+				for (int k = 0; k < 3; k++)
+					world[i].m[r][k] = r == k ? 1.0f : 0.0f;
 		if (j->ik == 3 && j->parent >= 0 && model->joints[j->parent].boneLength > 0.0f) {
 			// Effector: bone length along the parent's X axis (HSD jobj.c).
 			const Mat34* p = &world[j->parent];

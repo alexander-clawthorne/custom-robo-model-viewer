@@ -245,10 +245,10 @@ def skeleton_block(archive, index, joints):
     """CRM2 skeleton: joints, rig slots and the robot's 32 dimension floats.
     Per joint: s16 parent, u8 IK type (1 JOINT1, 2 JOINT2, 3 EFFECTOR), u8 pad,
     f32 rot[3] (radians), scale[3], trans[3], IK bone length, inverse bind 3x4."""
-    from pose import rig
+    from pose import inverse_bind, rig
     out = struct.pack('<I', len(joints))
     for j in joints:
-        inv = np.linalg.inv(np.array(j.world))[:3, :].reshape(-1)
+        inv = inverse_bind(j)[:3, :].reshape(-1)
         out += struct.pack('<hBB', j.parent, j.ik, 0) + struct.pack('<10f', *j.rot, *j.scale, *j.trans, j.bone_length)
         out += struct.pack('<12f', *inv)
     dims, paths = rig(archive, index)
